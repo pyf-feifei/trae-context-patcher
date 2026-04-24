@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.log
+*.tmp
+trae-installed-search.txt
+.env
+.DS_Store
+Thumbs.db

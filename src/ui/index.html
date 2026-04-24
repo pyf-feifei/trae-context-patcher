@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Trae 上下文补丁器</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="backdrop backdrop-one"></div>
+    <div class="backdrop backdrop-two"></div>
+    <main class="app-shell">
+      <header class="hero panel">
+        <div>
+          <p class="eyebrow">本地 Trae 补丁工具</p>
+          <h1>Trae 上下文补丁器</h1>
+          <p class="hero-copy">
+            通过图形界面配置自定义模型的上下文窗口，一键应用或回滚本地 Trae 补丁，不用再敲命令行。
+          </p>
+        </div>
+        <div class="hero-actions">
+          <button id="pickTraeRootButton" class="secondary-button" type="button">选择 Trae 目录</button>
+          <button id="refreshButton" class="ghost-button" type="button">刷新</button>
+        </div>
+      </header>
+
+      <section id="notice" class="notice" aria-live="polite"></section>
+
+      <section class="status-grid">
+        <article class="status-card panel">
+          <span class="status-label">Trae 路径</span>
+          <strong id="traeRootValue">加载中...</strong>
+        </article>
+        <article class="status-card panel">
+          <span class="status-label">配置文件</span>
+          <strong id="configPathValue">加载中...</strong>
+        </article>
+        <article class="status-card panel">
+          <span class="status-label">Trae 运行状态</span>
+          <strong id="traeRunningValue">加载中...</strong>
+        </article>
+        <article class="status-card panel">
+          <span class="status-label">补丁状态</span>
+          <strong id="patchStateValue">加载中...</strong>
+        </article>
+        <article class="status-card panel">
+          <span class="status-label">补丁接管方</span>
+          <strong id="patchOwnerValue">加载中...</strong>
+        </article>
+        <article class="status-card panel">
+          <span class="status-label">已配置模型</span>
+          <strong id="modelCountValue">0</strong>
+        </article>
+      </section>
+
+      <section class="workspace">
+        <article class="panel editor-panel">
+          <div class="panel-header">
+            <div>
+              <p class="section-kicker">映射编辑</p>
+              <h2 id="editorTitle">新增模型映射</h2>
+            </div>
+          </div>
+          <form id="mappingForm" class="mapping-form">
+            <label>
+              <span>Model ID</span>
+              <input id="modelIdInput" name="modelId" type="text" placeholder="gpt-5-custom" required />
+            </label>
+            <label>
+              <span>上下文窗口 Token</span>
+              <input id="tokensInput" name="tokens" type="number" min="1" step="1" placeholder="262144" required />
+            </label>
+            <div class="form-actions">
+              <button id="saveButton" class="primary-button" type="submit">保存映射</button>
+              <button id="cancelEditButton" class="ghost-button" type="button" hidden>取消编辑</button>
+            </div>
+          </form>
+          <div id="warningPanel" class="warning-panel" hidden></div>
+        </article>
+
+        <article class="panel list-panel">
+          <div class="panel-header">
+            <div>
+              <p class="section-kicker">当前配置</p>
+              <h2>模型映射列表</h2>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Model ID</th>
+                  <th>上下文</th>
+                  <th>更新时间</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="mappingTableBody"></tbody>
+            </table>
+            <div id="emptyState" class="empty-state" hidden>
+              还没有模型映射。先在左侧添加一条，再应用补丁。
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel action-panel">
+        <div class="panel-header compact">
+          <div>
+            <p class="section-kicker">补丁控制</p>
+            <h2>应用或回滚</h2>
+          </div>
+        </div>
+        <div class="patch-actions">
+          <button id="applyButton" class="primary-button" type="button">应用补丁</button>
+          <button id="revertButton" class="secondary-button" type="button">回滚补丁</button>
+        </div>
+        <p class="footnote">应用或回滚前请先关闭 Trae。工具会自动备份原始 <code>main.js</code>。</p>
+      </section>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,6 @@
+export const PATCH_MARKER = "trae-context-patcher-marker";
+export const HELPER_FILENAME = "trae-context-override.js";
+export const BACKUP_SUFFIX = ".trae-context-patcher-backup";
+export const MTGA_PATCH_MARKER = "mtga-trae-context-override-marker";
+export const MTGA_HELPER_FILENAME = "mtga-trae-context-override.js";
+export const TRAE_PROCESS_NAME = "Trae";
