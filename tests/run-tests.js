@@ -155,8 +155,10 @@ return applyOverridesToObject;`)();
   });
 
   assert.deepEqual(payload.context_window_sizes, [262144]);
-  assert.equal(payload.context_window_size, 262144);
+  assert.deepEqual(payload.context_window_size, { default: 262144, max: [262144] });
   assert.equal(payload.context_window_tokens, 262144);
+  assert.equal(payload.selected_max_context_window_size, 262144);
+  assert.equal(payload.max_tokens, 262144);
   assert.equal(payload.max_context_tokens, 262144);
   assert.equal(payload.prompt_max_tokens, 262144);
   assert.equal(payload.contextWindowTokens, 262144);
