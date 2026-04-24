@@ -2,12 +2,23 @@
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { getDefaultConfigPath, loadConfig } from "./config.js";
 import { fileExists } from "./utils.js";
 
-const TARGET_TOKENS = 262144;
+const FALLBACK_TARGET_TOKENS = 262144;
 const TARGET_MODEL = "gpt-5.4";
 const TARGET_HOST = "spongyicybulk-clip.hf.space";
 const STATE_DB_BACKUP_SUFFIX = ".trae-context-state-backup";
+
+function getConfiguredTargetTokens(configPath = getDefaultConfigPath()) {
+  const config = loadConfig(configPath);
+  const exact = config.models["gpt-5.4"]?.context_window_tokens;
+  if (Number.isInteger(exact) && exact > 0) return exact;
+  const first = Object.values(config.models || {})
+    .map((item) => item?.context_window_tokens)
+    .find((item) => Number.isInteger(item) && item > 0);
+  return first || FALLBACK_TARGET_TOKENS;
+}
 
 export function getStateDbPath() {
   const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
@@ -140,13 +151,13 @@ function runPython(script, args) {
   return String(result.stdout || "").trim();
 }
 
-export function getStateDatabasePatchStatus({ dbPath = getStateDbPath() } = {}) {
+export function getStateDatabasePatchStatus({ dbPath = getStateDbPath(), configPath = getDefaultConfigPath() } = {}) {
   const backupPath = `${dbPath}${STATE_DB_BACKUP_SUFFIX}`;
   if (!fileExists(dbPath)) {
     return { stateDbPath: dbPath, stateDbExists: false, stateDbPatched: false, stateDbBackupExists: fileExists(backupPath), stateDbTargetCount: 0, stateDbPatchedCount: 0 };
   }
   try {
-    const raw = runPython(buildStatusScript(), [dbPath, String(TARGET_TOKENS), TARGET_MODEL, TARGET_HOST]);
+    const raw = runPython(buildStatusScript(), [dbPath, String(getConfiguredTargetTokens(configPath)), TARGET_MODEL, TARGET_HOST]);
     const parsed = JSON.parse(raw || "{}");
     return {
       stateDbPath: dbPath,
@@ -161,14 +172,14 @@ export function getStateDatabasePatchStatus({ dbPath = getStateDbPath() } = {}) 
   }
 }
 
-export function applyStateDatabasePatch({ dbPath = getStateDbPath() } = {}) {
-  if (!fileExists(dbPath)) return getStateDatabasePatchStatus({ dbPath });
+export function applyStateDatabasePatch({ dbPath = getStateDbPath(), configPath = getDefaultConfigPath() } = {}) {
+  if (!fileExists(dbPath)) return getStateDatabasePatchStatus({ dbPath, configPath });
   const backupPath = `${dbPath}${STATE_DB_BACKUP_SUFFIX}`;
   if (!fileExists(backupPath)) {
     fs.copyFileSync(dbPath, backupPath);
   }
-  runPython(buildPatchScript(), [dbPath, String(TARGET_TOKENS), TARGET_MODEL, TARGET_HOST]);
-  return getStateDatabasePatchStatus({ dbPath });
+  runPython(buildPatchScript(), [dbPath, String(getConfiguredTargetTokens(configPath)), TARGET_MODEL, TARGET_HOST]);
+  return getStateDatabasePatchStatus({ dbPath, configPath });
 }
 
 export function revertStateDatabasePatch({ dbPath = getStateDbPath() } = {}) {

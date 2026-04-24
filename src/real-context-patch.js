@@ -2,10 +2,37 @@
 import path from "node:path";
 import { REAL_CONTEXT_BACKUP_SUFFIX } from "./constants.js";
 import { fileExists, readText, writeText } from "./utils.js";
+import { getDefaultConfigPath, loadConfig } from "./config.js";
 import { resolveTraePaths } from "./trae-paths.js";
 
 const TARGET_HOST = "spongyicybulk-clip.hf.space";
-const TARGET_TOKENS = 262144;
+const FALLBACK_TARGET_TOKENS = 262144;
+
+function getConfiguredTargetTokens(configPath = getDefaultConfigPath()) {
+  const config = loadConfig(configPath);
+  const exact = config.models["gpt-5.4"]?.context_window_tokens;
+  if (Number.isInteger(exact) && exact > 0) return exact;
+  const first = Object.values(config.models || {})
+    .map((item) => item?.context_window_tokens)
+    .find((item) => Number.isInteger(item) && item > 0);
+  return first || FALLBACK_TARGET_TOKENS;
+}
+
+function replaceTokenLiterals(source, token) {
+  return source.replace(/262144/g, String(token));
+}
+
+function retargetExistingPatch(source, targetTokens) {
+  return source
+    .replace(
+      /u\.context_window_size=\d+,u\.prompt_max_tokens=\d+,u\.toolcall_history_max_tokens=\d+,u\.context_window_sizes=\[\d+\],u\.max_tokens=\d+/g,
+      `u.context_window_size=${targetTokens},u.prompt_max_tokens=${targetTokens},u.toolcall_history_max_tokens=${targetTokens},u.context_window_sizes=[${targetTokens}],u.max_tokens=${targetTokens}`,
+    )
+    .replace(
+      /i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,\d+\)\}/g,
+      `i={...i,max_tokens:Math.max(i.max_tokens||0,${targetTokens})}`,
+    );
+}
 
 function getAiModulesChatIndexPath(traeRoot) {
   const paths = resolveTraePaths({ traeRoot });
@@ -49,7 +76,8 @@ function backupHasPatchMarkers(backupPath) {
   const source = readText(backupPath);
   return source.includes("custom_model:g,terminal_context") ||
     source.includes("prompt_max_tokens:o?.prompt_max_tokens") ||
-    source.includes("i={...i,max_tokens:Math.max(i.max_tokens||0,262144)}");
+    source.includes("i={...i,max_tokens:Math.max(i.max_tokens||0,262144)}") ||
+    /i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,\d+\)\}/.test(source);
 }
 
 function getAvailableBackupPath(indexJsPath) {
@@ -60,10 +88,13 @@ function getAvailableBackupPath(indexJsPath) {
   return getLegacyBackupPaths(indexJsPath)[0];
 }
 
-function patchRequestModelInfo(source) {
+function patchRequestModelInfo(source, targetTokens) {
   const oldSnippet = 'context_window_size:o?.selected_max_context_window_size,region:o?.region,sk:o?.sk||"",auth_type:o?.auth_type||0},d=this.configurationService.getConfiguration("ai_assistant.request.aws_session_token")||void 0;return d&&(u.session_token=d),u}';
-  const newSnippet = 'context_window_size:o?.selected_max_context_window_size??("number"==typeof o?.context_window_size?o.context_window_size:o?.context_window_size?.default),prompt_max_tokens:o?.prompt_max_tokens,toolcall_history_max_tokens:o?.toolcall_history_max_tokens,context_window_sizes:o?.context_window_sizes??(o?.selected_max_context_window_size?[o.selected_max_context_window_size]:void 0),max_tokens:o?.max_tokens,region:o?.region,sk:o?.sk||"",auth_type:o?.auth_type||0};(u.config_name==="openai//gpt-5.4"||u.display_model_name==="gpt-5.4"||u.base_url?.includes("spongyicybulk-clip.hf.space"))&&(u.context_window_size=262144,u.prompt_max_tokens=262144,u.toolcall_history_max_tokens=262144,u.context_window_sizes=[262144],u.max_tokens=262144);let d=this.configurationService.getConfiguration("ai_assistant.request.aws_session_token")||void 0;return d&&(u.session_token=d),u}';
+  const newSnippet = replaceTokenLiterals('context_window_size:o?.selected_max_context_window_size??("number"==typeof o?.context_window_size?o.context_window_size:o?.context_window_size?.default),prompt_max_tokens:o?.prompt_max_tokens,toolcall_history_max_tokens:o?.toolcall_history_max_tokens,context_window_sizes:o?.context_window_sizes??(o?.selected_max_context_window_size?[o.selected_max_context_window_size]:void 0),max_tokens:o?.max_tokens,region:o?.region,sk:o?.sk||"",auth_type:o?.auth_type||0};(u.config_name==="openai//gpt-5.4"||u.display_model_name==="gpt-5.4"||u.base_url?.includes("spongyicybulk-clip.hf.space"))&&(u.context_window_size=262144,u.prompt_max_tokens=262144,u.toolcall_history_max_tokens=262144,u.context_window_sizes=[262144],u.max_tokens=262144);let d=this.configurationService.getConfiguration("ai_assistant.request.aws_session_token")||void 0;return d&&(u.session_token=d),u}', targetTokens);
   if (source.includes(newSnippet)) return source;
+  if (source.includes("prompt_max_tokens:o?.prompt_max_tokens") && source.includes("u.max_tokens=")) {
+    return retargetExistingPatch(source, targetTokens);
+  }
   if (!source.includes(oldSnippet)) {
     throw new Error("未找到真实请求模型字段构造位置，可能 Trae 版本已变化。");
   }
@@ -81,33 +112,37 @@ function patchCustomModelOmit(source) {
   throw new Error("未找到 custom_model 上下文字段删除位置，可能 Trae 版本已变化。");
 }
 
-function patchTokenUsageTooltip(source) {
-  const marker = `i={...i,max_tokens:Math.max(i.max_tokens||0,${TARGET_TOKENS})};let f=i?.last_turn_total_tokens/i?.max_tokens`;
+function patchTokenUsageTooltip(source, targetTokens) {
+  const marker = `i={...i,max_tokens:Math.max(i.max_tokens||0,${targetTokens})};let f=i?.last_turn_total_tokens/i?.max_tokens`;
   if (source.includes(marker)) return source;
+  if (/i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,\d+\)\};let f=i\?\.last_turn_total_tokens\/i\?\.max_tokens/.test(source)) {
+    return retargetExistingPatch(source, targetTokens);
+  }
 
   const oldSnippet = "if(!l||!(i?.last_turn_total_tokens&&i?.max_tokens))return null;let f=i?.last_turn_total_tokens/i?.max_tokens";
-  const newSnippet = `if(!l||!(i?.last_turn_total_tokens&&i?.max_tokens))return null;i={...i,max_tokens:Math.max(i.max_tokens||0,${TARGET_TOKENS})};let f=i?.last_turn_total_tokens/i?.max_tokens`;
+  const newSnippet = `if(!l||!(i?.last_turn_total_tokens&&i?.max_tokens))return null;i={...i,max_tokens:Math.max(i.max_tokens||0,${targetTokens})};let f=i?.last_turn_total_tokens/i?.max_tokens`;
   if (!source.includes(oldSnippet)) {
     throw new Error("未找到上下文使用率 UI 显示位置，可能 Trae 版本已变化。");
   }
   return source.replace(oldSnippet, newSnippet);
 }
 
-function patchSource(source) {
-  return patchTokenUsageTooltip(patchCustomModelOmit(patchRequestModelInfo(source)));
+function patchSource(source, targetTokens) {
+  return patchTokenUsageTooltip(patchCustomModelOmit(patchRequestModelInfo(source, targetTokens)), targetTokens);
 }
 
-export function getRealContextPatchStatus({ traeRoot } = {}) {
+export function getRealContextPatchStatus({ traeRoot, configPath = getDefaultConfigPath() } = {}) {
   const indexJsPath = getAiModulesChatIndexPath(traeRoot);
   const backupPath = getBackupPath(indexJsPath);
   const exists = fileExists(indexJsPath);
   const source = exists ? readText(indexJsPath) : "";
+  const targetTokens = getConfiguredTargetTokens(configPath);
   const realContextPatched =
     source.includes("custom_model:g,terminal_context") &&
     source.includes("prompt_max_tokens:o?.prompt_max_tokens") &&
     source.includes(TARGET_HOST) &&
-    source.includes(`u.max_tokens=${TARGET_TOKENS}`) &&
-    source.includes(`i={...i,max_tokens:Math.max(i.max_tokens||0,${TARGET_TOKENS})}`);
+    source.includes(`u.max_tokens=${targetTokens}`) &&
+    source.includes(`i={...i,max_tokens:Math.max(i.max_tokens||0,${targetTokens})}`);
   return {
     realContextIndexPath: indexJsPath,
     realContextBackupPath: backupPath,
@@ -117,8 +152,8 @@ export function getRealContextPatchStatus({ traeRoot } = {}) {
   };
 }
 
-export function applyRealContextPatch({ traeRoot } = {}) {
-  const status = getRealContextPatchStatus({ traeRoot });
+export function applyRealContextPatch({ traeRoot, configPath = getDefaultConfigPath() } = {}) {
+  const status = getRealContextPatchStatus({ traeRoot, configPath });
   if (!status.realContextFileExists) {
     throw new Error(`真实请求链路文件不存在：${status.realContextIndexPath}`);
   }
@@ -126,11 +161,11 @@ export function applyRealContextPatch({ traeRoot } = {}) {
   if (!status.realContextBackupExists) {
     fs.copyFileSync(status.realContextIndexPath, status.realContextBackupPath);
   }
-  const patched = patchSource(source);
+  const patched = patchSource(source, getConfiguredTargetTokens(configPath));
   if (patched !== source) {
     writeText(status.realContextIndexPath, patched);
   }
-  return getRealContextPatchStatus({ traeRoot });
+  return getRealContextPatchStatus({ traeRoot, configPath });
 }
 
 export function revertRealContextPatch({ traeRoot } = {}) {

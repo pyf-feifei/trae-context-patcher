@@ -40,8 +40,19 @@ function toDashboard(status) {
   };
 }
 
+function getFullPatchStatus(options = {}) {
+  const baseStatus = getPatchStatus(options);
+  const realStatus = getRealContextPatchStatus(options);
+  const dbStatus = getStateDatabasePatchStatus(options);
+  return {
+    ...baseStatus,
+    ...realStatus,
+    ...dbStatus,
+  };
+}
+
 export function loadDesktopState(options = {}) {
-  return toDashboard(getPatchStatus(options));
+  return toDashboard(getFullPatchStatus(options));
 }
 
 export function saveDesktopModelOverride({

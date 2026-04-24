@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig, removeModelOverride, setModelOverride } from "../src/config.js";
+import { getDefaultConfigPath, loadConfig, removeModelOverride, setModelOverride } from "../src/config.js";
 import { buildHelperSource } from "../src/helper-template.js";
 import { getTraeRootCandidates, resolveTraePaths } from "../src/trae-paths.js";
 import {
@@ -15,6 +15,7 @@ import {
 import { applyPatch, getPatchStatus, revertPatch } from "../src/patcher.js";
 import { runCli } from "../src/cli.js";
 import { applyRealContextPatch, getRealContextPatchStatus, revertRealContextPatch } from "../src/real-context-patch.js";
+import { applyStateDatabasePatch, getStateDatabasePatchStatus } from "../src/state-db-patch.js";
 import { terminateTraeIfRequested } from "../src/process-check.js";
 
 function tempDir(prefix) {
@@ -28,7 +29,6 @@ function createFakeTraeInstall(prefix = "tcp-trae-") {
   fs.writeFileSync(path.join(outDir, "main.js"), 'console.log("main");\n', "utf8");
   return { root, outDir };
 }
-
 
 function createFakeTraeWithRealContextFile(prefix = "tcp-real-") {
   const fake = createFakeTraeInstall(prefix);
@@ -58,10 +58,6 @@ async function runTest(name, fn) {
     process.exitCode = 1;
   }
 }
-
-
-
-
 
 await runTest("getTraeRootCandidates includes env override and common Windows installs", async () => {
   const previousTraeInstallDir = process.env.TRAE_INSTALL_DIR;
@@ -185,10 +181,39 @@ return applyOverridesToObject;`)();
   assert.equal(payload.contextWindowTokens, 262144);
 });
 
+await runTest("real context patch uses configured token value", async () => {
+  const { root, indexJsPath } = createFakeTraeWithRealContextFile("tcp-real-config-");
+  const configPath = path.join(root, "overrides.json");
+  setModelOverride(configPath, "gpt-5.4", 1000000);
+
+  applyRealContextPatch({ traeRoot: root, configPath });
+
+  const patched = fs.readFileSync(indexJsPath, "utf8");
+  assert.match(patched, /u\.max_tokens=1000000/);
+  assert.match(patched, /i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,1000000\)\}/);
+  assert.doesNotMatch(patched, /u\.max_tokens=262144/);
+});
+
+await runTest("real context patch updates an existing patch to configured token value", async () => {
+  const { root, indexJsPath } = createFakeTraeWithRealContextFile("tcp-real-repatch-");
+  const configPath = path.join(root, "overrides.json");
+  setModelOverride(configPath, "gpt-5.4", 262144);
+  applyRealContextPatch({ traeRoot: root, configPath });
+  setModelOverride(configPath, "gpt-5.4", 1000000);
+
+  applyRealContextPatch({ traeRoot: root, configPath });
+
+  const patched = fs.readFileSync(indexJsPath, "utf8");
+  assert.match(patched, /u\.max_tokens=1000000/);
+  assert.match(patched, /i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,1000000\)\}/);
+  assert.doesNotMatch(patched, /u\.max_tokens=262144/);
+});
 
 await runTest("real context patch applies request-chain changes and reverts from backup", async () => {
   const { root, indexJsPath, source } = createFakeTraeWithRealContextFile();
-  const applied = applyRealContextPatch({ traeRoot: root });
+  const configPath = path.join(root, "overrides.json");
+  setModelOverride(configPath, "gpt-5.4", 262144);
+  const applied = applyRealContextPatch({ traeRoot: root, configPath });
   assert.equal(applied.realContextPatched, true);
   const patched = fs.readFileSync(indexJsPath, "utf8");
   assert.match(patched, /custom_model:g,terminal_context/);
@@ -196,7 +221,7 @@ await runTest("real context patch applies request-chain changes and reverts from
   assert.match(patched, /spongyicybulk-clip\.hf\.space/);
   assert.match(patched, /i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,262144\)\}/);
 
-  const status = getRealContextPatchStatus({ traeRoot: root });
+  const status = getRealContextPatchStatus({ traeRoot: root, configPath });
   assert.equal(status.realContextPatched, true);
   assert.equal(status.realContextBackupExists, true);
 
@@ -204,7 +229,6 @@ await runTest("real context patch applies request-chain changes and reverts from
   assert.equal(reverted.realContextPatched, false);
   assert.equal(fs.readFileSync(indexJsPath, "utf8"), source);
 });
-
 
 await runTest("real context revert uses legacy timestamp backup when fixed backup is missing", async () => {
   const { root, indexJsPath, source } = createFakeTraeWithRealContextFile();
@@ -220,7 +244,6 @@ await runTest("real context revert uses legacy timestamp backup when fixed backu
   assert.equal(fs.readFileSync(indexJsPath, "utf8"), source);
   assert.equal(fs.existsSync(legacyBackup), false);
 });
-
 
 await runTest("real context revert restores earliest legacy backup to remove UI-only patch", async () => {
   const { root, indexJsPath, source } = createFakeTraeWithRealContextFile();
@@ -238,6 +261,49 @@ await runTest("real context revert restores earliest legacy backup to remove UI-
   revertRealContextPatch({ traeRoot: root });
 
   assert.equal(fs.readFileSync(indexJsPath, "utf8"), source);
+});
+
+await runTest("state database patch uses configured token value", async () => {
+  const root = tempDir("tcp-state-config-");
+  const dbPath = path.join(root, "state.vscdb");
+  const seed = {
+    models: [
+      {
+        name: "openai//gpt-5.4",
+        display_name: "gpt-5.4",
+        base_url: "https://spongyicybulk-clip.hf.space/v1/chat/completions",
+        prompt_max_tokens: 262144,
+      },
+    ],
+  };
+  const setup = `
+import sqlite3, sys, json
+conn = sqlite3.connect(sys.argv[1])
+cur = conn.cursor()
+cur.execute('create table ItemTable (key text primary key, value text)')
+cur.execute('insert into ItemTable values (?, ?)', ('model-list', ${JSON.stringify(JSON.stringify(seed))}))
+conn.commit()
+conn.close()
+`;
+  const { spawnSync } = await import("node:child_process");
+  assert.equal(spawnSync("python", ["-c", setup, dbPath], { encoding: "utf8" }).status, 0);
+  const configPath = path.join(root, "overrides.json");
+  setModelOverride(configPath, "gpt-5.4", 1000000);
+
+  const status = applyStateDatabasePatch({ dbPath, configPath });
+
+  assert.equal(status.stateDbPatched, true);
+  const check = `
+import sqlite3, sys, json
+conn = sqlite3.connect(sys.argv[1])
+value = conn.execute('select value from ItemTable where key=?', ('model-list',)).fetchone()[0]
+print(json.loads(value)['models'][0]['prompt_max_tokens'])
+print(json.loads(value)['models'][0]['max_tokens'])
+conn.close()
+`;
+  const result = spawnSync("python", ["-c", check, dbPath], { encoding: "utf8" });
+  assert.equal(result.status, 0);
+  assert.deepEqual(result.stdout.trim().split(/\r?\n/), ["1000000", "1000000"]);
 });
 
 await runTest("terminateTraeIfRequested only kills when requested", async () => {
@@ -363,6 +429,21 @@ await runTest("loadDesktopState returns sorted mappings and patch status", async
     dashboard.mappings.map((mapping) => mapping.modelId),
     ["a-model", "z-model"],
   );
+});
+
+await runTest("loadDesktopState includes real request-chain status", async () => {
+  const { root } = createFakeTraeWithRealContextFile("tcp-desktop-real-");
+  const configPath = path.join(root, "overrides.json");
+  applyRealContextPatch({ traeRoot: root, configPath });
+
+  const dashboard = loadDesktopState({
+    traeRoot: root,
+    configPath,
+    skipProcessCheck: true,
+  });
+
+  assert.equal(dashboard.status.realContextPatched, true);
+  assert.equal(dashboard.status.realContextFileExists, true);
 });
 
 await runTest("saveDesktopModelOverride persists mapping and returns updated state", async () => {
