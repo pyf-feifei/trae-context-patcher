@@ -16,6 +16,7 @@ function normalizeOptions(payload = {}) {
   return {
     traeRoot: normalizePath(payload.traeRoot),
     configPath: normalizePath(payload.configPath),
+    allowTerminate: payload.allowTerminate === true,
   };
 }
 

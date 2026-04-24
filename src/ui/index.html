@@ -51,6 +51,14 @@
           <span class="status-label">已配置模型</span>
           <strong id="modelCountValue">0</strong>
         </article>
+        <article class="status-card panel">
+          <span class="status-label">真实请求链路</span>
+          <strong id="realContextValue">加载中...</strong>
+        </article>
+        <article class="status-card panel">
+          <span class="status-label">数据库字段</span>
+          <strong id="stateDbValue">加载中...</strong>
+        </article>
       </section>
 
       <section class="workspace">
@@ -112,10 +120,10 @@
           </div>
         </div>
         <div class="patch-actions">
-          <button id="applyButton" class="primary-button" type="button">应用补丁</button>
-          <button id="revertButton" class="secondary-button" type="button">回滚补丁</button>
+          <button id="applyButton" class="primary-button" type="button">一键应用真实补丁</button>
+          <button id="revertButton" class="secondary-button" type="button">一键还原全部补丁</button>
         </div>
-        <p class="footnote">应用或回滚前请先关闭 Trae。工具会自动备份原始 <code>main.js</code>。</p>
+        <p class="footnote">如果 Trae 正在运行，工具会先询问是否自动关闭 Trae；确认后再备份并修改 <code>main.js</code>、真实请求链路和本地模型数据库。</p>
       </section>
     </main>
     <script type="module" src="./app.js"></script>

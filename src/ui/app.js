@@ -16,6 +16,8 @@ const elements = {
   patchStateValue: document.getElementById("patchStateValue"),
   patchOwnerValue: document.getElementById("patchOwnerValue"),
   modelCountValue: document.getElementById("modelCountValue"),
+  realContextValue: document.getElementById("realContextValue"),
+  stateDbValue: document.getElementById("stateDbValue"),
   warningPanel: document.getElementById("warningPanel"),
   refreshButton: document.getElementById("refreshButton"),
   pickTraeRootButton: document.getElementById("pickTraeRootButton"),
@@ -108,7 +110,7 @@ function renderWarning(status) {
   }
   if (status.traeRunning) {
     elements.warningPanel.hidden = false;
-    elements.warningPanel.textContent = "Trae 正在运行。请先关闭后再应用或回滚补丁。";
+    elements.warningPanel.textContent = "Trae 正在运行。应用或还原时会提示是否自动关闭 Trae。";
     return;
   }
   if (status.patchOwner === "mtga") {
@@ -190,6 +192,8 @@ function render() {
   elements.patchStateValue.textContent = status.mainPatched ? "已打补丁" : "未打补丁";
   elements.patchOwnerValue.textContent = status.patchOwner === "self" ? "本工具" : status.patchOwner;
   elements.modelCountValue.textContent = String(status.modelCount);
+  elements.realContextValue.textContent = status.realContextPatched ? "已生效" : "未生效";
+  elements.stateDbValue.textContent = status.stateDbPatched ? `已生效 (${status.stateDbPatchedCount}/${status.stateDbTargetCount})` : `未生效 (${status.stateDbPatchedCount || 0}/${status.stateDbTargetCount || 0})`;
   renderWarning(status);
   renderMappings(mappings);
 }
@@ -210,6 +214,15 @@ function getStartupMessage(dashboard) {
     return `已自动检测到 Trae 安装目录：${dashboard.status.traeRoot}`;
   }
   return `未自动找到 Trae 安装目录，已尝试默认路径：${dashboard.status.traeRoot}`;
+}
+
+
+function confirmTerminateIfRunning() {
+  const running = state.dashboard?.status?.traeRunning;
+  if (!running) {
+    return true;
+  }
+  return window.confirm("检测到 Trae 正在运行。继续操作会自动关闭 Trae，是否继续？");
 }
 
 async function refreshState(message = "状态已刷新。") {
@@ -269,18 +282,26 @@ elements.pickTraeRootButton.addEventListener("click", async () => {
 elements.applyButton.addEventListener("click", async () => {
   await runAction(async () => {
     const bridge = requireDesktopBridge();
-    state.dashboard = await bridge.applyPatch(getRequestOptions());
+    if (!confirmTerminateIfRunning()) {
+      showNotice("已取消应用补丁。", "info");
+      return;
+    }
+    state.dashboard = await bridge.applyPatch({ ...getRequestOptions(), allowTerminate: true });
     render();
-    showNotice("补丁已应用。重启 Trae 后请新开会话验证。", "success");
+    showNotice("真实上下文补丁已应用。请重新打开 Trae，发送消息后查看 ai-agent 日志验证。", "success");
   });
 });
 
 elements.revertButton.addEventListener("click", async () => {
   await runAction(async () => {
     const bridge = requireDesktopBridge();
-    state.dashboard = await bridge.revertPatch(getRequestOptions());
+    if (!confirmTerminateIfRunning()) {
+      showNotice("已取消还原补丁。", "info");
+      return;
+    }
+    state.dashboard = await bridge.revertPatch({ ...getRequestOptions(), allowTerminate: true });
     render();
-    showNotice("补丁已回滚，并已移除 helper。", "success");
+    showNotice("全部补丁已还原。需要时可重新一键应用。", "success");
   });
 });
 

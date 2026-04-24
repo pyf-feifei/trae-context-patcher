@@ -1,5 +1,8 @@
 import { removeModelOverride, setModelOverride } from "./config.js";
 import { applyPatch, getPatchStatus, revertPatch } from "./patcher.js";
+import { applyRealContextPatch, getRealContextPatchStatus, revertRealContextPatch } from "./real-context-patch.js";
+import { applyStateDatabasePatch, getStateDatabasePatchStatus, revertStateDatabasePatch } from "./state-db-patch.js";
+import { terminateTraeIfRequested } from "./process-check.js";
 
 function toMappings(models) {
   return Object.entries(models)
@@ -24,6 +27,14 @@ function toDashboard(status) {
       helperExists: status.helperExists,
       backupExists: status.backupExists,
       modelCount: status.modelCount,
+      realContextPatched: status.realContextPatched,
+      realContextFileExists: status.realContextFileExists,
+      realContextBackupExists: status.realContextBackupExists,
+      stateDbPatched: status.stateDbPatched,
+      stateDbExists: status.stateDbExists,
+      stateDbBackupExists: status.stateDbBackupExists,
+      stateDbTargetCount: status.stateDbTargetCount,
+      stateDbPatchedCount: status.stateDbPatchedCount,
     },
     mappings: toMappings(status.models),
   };
@@ -55,11 +66,21 @@ export function removeDesktopModelOverride({
 }
 
 export function applyDesktopPatch(options = {}) {
-  applyPatch(options);
+  if (!options.skipProcessCheck) terminateTraeIfRequested({ allowTerminate: options.allowTerminate });
+  applyPatch({ ...options, skipProcessCheck: true });
+  if (!options.skipProcessCheck) {
+    applyRealContextPatch(options);
+    applyStateDatabasePatch();
+  }
   return loadDesktopState({ ...options, skipProcessCheck: true });
 }
 
 export function revertDesktopPatch(options = {}) {
-  revertPatch(options);
+  if (!options.skipProcessCheck) terminateTraeIfRequested({ allowTerminate: options.allowTerminate });
+  if (!options.skipProcessCheck) {
+    revertRealContextPatch(options);
+    revertStateDatabasePatch();
+  }
+  revertPatch({ ...options, skipProcessCheck: true });
   return loadDesktopState({ ...options, skipProcessCheck: true });
 }

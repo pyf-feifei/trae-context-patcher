@@ -14,6 +14,8 @@ import {
 } from "../src/desktop-service.js";
 import { applyPatch, getPatchStatus, revertPatch } from "../src/patcher.js";
 import { runCli } from "../src/cli.js";
+import { applyRealContextPatch, getRealContextPatchStatus, revertRealContextPatch } from "../src/real-context-patch.js";
+import { terminateTraeIfRequested } from "../src/process-check.js";
 
 function tempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -25,6 +27,25 @@ function createFakeTraeInstall(prefix = "tcp-trae-") {
   fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(path.join(outDir, "main.js"), 'console.log("main");\n', "utf8");
   return { root, outDir };
+}
+
+
+function createFakeTraeWithRealContextFile(prefix = "tcp-real-") {
+  const fake = createFakeTraeInstall(prefix);
+  const distDir = path.join(
+    fake.root,
+    "resources",
+    "app",
+    "node_modules",
+    "@byted-icube",
+    "ai-modules-chat",
+    "dist",
+  );
+  fs.mkdirSync(distDir, { recursive: true });
+  const indexJsPath = path.join(distDir, "index.js");
+  const source = 'class j9{createChatRequestModelInfo(e,t,i,r){let o={name:"openai//gpt-5.4",display_name:"gpt-5.4",base_url:"https://spongyicybulk-clip.hf.space/v1/chat/completions"};let u={provider:o?.provider||"",config_name:o?.name||i||"",display_model_name:o?.display_name,multimodal:o?.multimodal===!0,ak:o?.ak||"",use_remote_service:!o?.client_connect,is_preset:false,config_source:o?.config_source??3,base_url:o?.base_url||"",context_window_size:o?.selected_max_context_window_size,region:o?.region,sk:o?.sk||"",auth_type:o?.auth_type||0},d=this.configurationService.getConfiguration("ai_assistant.request.aws_session_token")||void 0;return d&&(u.session_token=d),u}createChatRequestObject(){let g={config_name:"openai//gpt-5.4",context_window_size:262144};return{model_name:g.config_name,custom_model:j4(g,["context_window_size"]),terminal_context:[]}}renderUsage(l,i){if(!l||!(i?.last_turn_total_tokens&&i?.max_tokens))return null;let f=i?.last_turn_total_tokens/i?.max_tokens,_=`${(100*f).toFixed(0)}%`;return{percent:_,total:`${i.max_tokens/1e3}K`}}}';
+  fs.writeFileSync(indexJsPath, source, "utf8");
+  return { ...fake, indexJsPath, source };
 }
 
 async function runTest(name, fn) {
@@ -162,6 +183,73 @@ return applyOverridesToObject;`)();
   assert.equal(payload.max_context_tokens, 262144);
   assert.equal(payload.prompt_max_tokens, 262144);
   assert.equal(payload.contextWindowTokens, 262144);
+});
+
+
+await runTest("real context patch applies request-chain changes and reverts from backup", async () => {
+  const { root, indexJsPath, source } = createFakeTraeWithRealContextFile();
+  const applied = applyRealContextPatch({ traeRoot: root });
+  assert.equal(applied.realContextPatched, true);
+  const patched = fs.readFileSync(indexJsPath, "utf8");
+  assert.match(patched, /custom_model:g,terminal_context/);
+  assert.match(patched, /prompt_max_tokens:o\?\.prompt_max_tokens/);
+  assert.match(patched, /spongyicybulk-clip\.hf\.space/);
+  assert.match(patched, /i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,262144\)\}/);
+
+  const status = getRealContextPatchStatus({ traeRoot: root });
+  assert.equal(status.realContextPatched, true);
+  assert.equal(status.realContextBackupExists, true);
+
+  const reverted = revertRealContextPatch({ traeRoot: root });
+  assert.equal(reverted.realContextPatched, false);
+  assert.equal(fs.readFileSync(indexJsPath, "utf8"), source);
+});
+
+
+await runTest("real context revert uses legacy timestamp backup when fixed backup is missing", async () => {
+  const { root, indexJsPath, source } = createFakeTraeWithRealContextFile();
+  applyRealContextPatch({ traeRoot: root });
+  const fixedBackup = `${indexJsPath}.trae-context-real-context-backup`;
+  const legacyBackup = `${indexJsPath}.trae-context-real-context-123.bak`;
+  fs.copyFileSync(fixedBackup, legacyBackup);
+  fs.unlinkSync(fixedBackup);
+
+  const reverted = revertRealContextPatch({ traeRoot: root });
+
+  assert.equal(reverted.realContextPatched, false);
+  assert.equal(fs.readFileSync(indexJsPath, "utf8"), source);
+  assert.equal(fs.existsSync(legacyBackup), false);
+});
+
+
+await runTest("real context revert restores earliest legacy backup to remove UI-only patch", async () => {
+  const { root, indexJsPath, source } = createFakeTraeWithRealContextFile();
+  const uiPatchedSource = `${source}\ni={...i,max_tokens:Math.max(i.max_tokens||0,262144)};`;
+  const oldBackup = `${indexJsPath}.trae-context-patcher-100.bak`;
+  const newerBackup = `${indexJsPath}.trae-context-real-context-200.bak`;
+  fs.writeFileSync(oldBackup, source, "utf8");
+  fs.writeFileSync(newerBackup, uiPatchedSource, "utf8");
+  fs.writeFileSync(indexJsPath, `${uiPatchedSource}\ncustom_model:g,terminal_context:w;prompt_max_tokens:o?.prompt_max_tokens;`, "utf8");
+  const oldTime = new Date("2026-01-01T00:00:00Z");
+  const newTime = new Date("2026-01-02T00:00:00Z");
+  fs.utimesSync(oldBackup, oldTime, oldTime);
+  fs.utimesSync(newerBackup, newTime, newTime);
+
+  revertRealContextPatch({ traeRoot: root });
+
+  assert.equal(fs.readFileSync(indexJsPath, "utf8"), source);
+});
+
+await runTest("terminateTraeIfRequested only kills when requested", async () => {
+  let calls = 0;
+  const runner = () => {
+    calls += 1;
+    return { status: 0 };
+  };
+  assert.throws(() => terminateTraeIfRequested({ allowTerminate: false, isRunning: () => true, runner }), /Confirm automatic close/);
+  assert.equal(calls, 0);
+  assert.equal(terminateTraeIfRequested({ allowTerminate: true, isRunning: () => true, runner }), true);
+  assert.equal(calls, 1);
 });
 
 await runTest("setModelOverride creates config and persists tokens", async () => {
@@ -350,9 +438,9 @@ await runTest("desktop UI ships Chinese labels", async () => {
 
   assert.match(html, /Trae 上下文补丁器/);
   assert.match(html, /应用补丁/);
-  assert.match(html, /回滚补丁/);
+  assert.match(html, /一键还原全部补丁/);
   assert.match(appJs, /已自动检测到 Trae 安装目录/);
-  assert.match(appJs, /Trae 正在运行。请先关闭后再应用或回滚补丁/);
+  assert.match(appJs, /Trae 正在运行。应用或还原时会提示是否自动关闭 Trae/);
   assert.match(appJs, /未自动找到 Trae 安装目录/);
   const styles = fs.readFileSync(path.join(process.cwd(), "src", "ui", "styles.css"), "utf8");
   assert.match(styles, /\.notice \{[\s\S]*position: sticky/);
