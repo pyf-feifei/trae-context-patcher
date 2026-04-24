@@ -194,6 +194,21 @@ await runTest("real context patch uses configured token value", async () => {
   assert.doesNotMatch(patched, /u\.max_tokens=262144/);
 });
 
+
+await runTest("real context patch formats million-token tooltip as M", async () => {
+  const { root, indexJsPath } = createFakeTraeWithRealContextFile("tcp-real-tooltip-");
+  const configPath = path.join(root, "overrides.json");
+  setModelOverride(configPath, "gpt-5.4", 1000000);
+
+  applyRealContextPatch({ traeRoot: root, configPath });
+
+  const patched = fs.readFileSync(indexJsPath, "utf8");
+  assert.match(patched, />=1e6/);
+  assert.match(patched, /\/1e6/);
+  assert.match(patched, /"M":"K"/);
+  assert.doesNotMatch(patched, /total:`\$\{i\.max_tokens\/1e3\}K`/);
+});
+
 await runTest("real context patch updates an existing patch to configured token value", async () => {
   const { root, indexJsPath } = createFakeTraeWithRealContextFile("tcp-real-repatch-");
   const configPath = path.join(root, "overrides.json");
@@ -207,6 +222,20 @@ await runTest("real context patch updates an existing patch to configured token 
   assert.match(patched, /u\.max_tokens=1000000/);
   assert.match(patched, /i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,1000000\)\}/);
   assert.doesNotMatch(patched, /u\.max_tokens=262144/);
+});
+
+
+await runTest("real context patch is idempotent after tooltip formatter is installed", async () => {
+  const { root, indexJsPath } = createFakeTraeWithRealContextFile("tcp-real-idempotent-");
+  const configPath = path.join(root, "overrides.json");
+  setModelOverride(configPath, "gpt-5.4", 1000000);
+  applyRealContextPatch({ traeRoot: root, configPath });
+  const oncePatched = fs.readFileSync(indexJsPath, "utf8");
+
+  const status = applyRealContextPatch({ traeRoot: root, configPath });
+
+  assert.equal(status.realContextPatched, true);
+  assert.equal(fs.readFileSync(indexJsPath, "utf8"), oncePatched);
 });
 
 await runTest("real context patch applies request-chain changes and reverts from backup", async () => {

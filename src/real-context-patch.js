@@ -127,8 +127,18 @@ function patchTokenUsageTooltip(source, targetTokens) {
   return source.replace(oldSnippet, newSnippet);
 }
 
+
+function patchTooltipTotalFormat(source) {
+  const oldSnippet = "total:`${i.max_tokens/1e3}K`";
+  const newSnippet = 'total:(e=>{const t=e>=1e6?e/1e6:e/1e3;return`${Number.isInteger(t)?t:t.toFixed(3).replace(/\.?0+$/," ").trim()}${e>=1e6?"M":"K"}`})(i.max_tokens)';
+  if (source.includes(newSnippet)) return source;
+  if (!source.includes(oldSnippet)) return source;
+  return source.replace(oldSnippet, newSnippet);
+}
+
+
 function patchSource(source, targetTokens) {
-  return patchTokenUsageTooltip(patchCustomModelOmit(patchRequestModelInfo(source, targetTokens)), targetTokens);
+  return patchTooltipTotalFormat(patchTokenUsageTooltip(patchCustomModelOmit(patchRequestModelInfo(source, targetTokens)), targetTokens));
 }
 
 export function getRealContextPatchStatus({ traeRoot, configPath = getDefaultConfigPath() } = {}) {

@@ -5,6 +5,7 @@ import { registerIpcHandlers } from "./ipc.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const appIcon = path.join(__dirname, "..", "assets", "icon.png");
 let handlersRegistered = false;
 
 function createWindow() {
@@ -16,6 +17,7 @@ function createWindow() {
     autoHideMenuBar: true,
     backgroundColor: "#10131b",
     title: "Trae 上下文补丁器",
+    icon: appIcon,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
