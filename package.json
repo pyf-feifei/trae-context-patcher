@@ -9,6 +9,8 @@
   },
   "scripts": {
     "dev": "electron .",
+    "gui": "electron .",
+    "cli": "node ./src/cli.js",
     "test": "node ./tests/run-tests.js",
     "status": "node ./src/cli.js status",
     "build:exe": "electron-builder --win portable"

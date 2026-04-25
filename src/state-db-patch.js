@@ -21,7 +21,11 @@ function getConfiguredTargetTokens(configPath = getDefaultConfigPath()) {
 }
 
 export function getStateDbPath() {
-  const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
+  const appData =
+    process.env.APPDATA ||
+    (process.platform === "darwin"
+      ? path.join(os.homedir(), "Library", "Application Support")
+      : path.join(os.homedir(), "AppData", "Roaming"));
   return path.join(appData, "Trae", "User", "globalStorage", "state.vscdb");
 }
 
@@ -143,12 +147,20 @@ print(json.dumps(result))
 }
 
 function runPython(script, args) {
-  const result = spawnSync("python", ["-c", script, ...args], { encoding: "utf8" });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(result.stderr || "Python state database operation failed.");
+  const candidates = process.platform === "win32" ? ["python", "py"] : ["python3", "python"];
+  let lastResult;
+  for (const command of candidates) {
+    const result = spawnSync(command, ["-c", script, ...args], { encoding: "utf8" });
+    if (result.error) {
+      lastResult = result;
+      continue;
+    }
+    if (result.status !== 0) {
+      throw new Error(result.stderr || "Python state database operation failed.");
+    }
+    return String(result.stdout || "").trim();
   }
-  return String(result.stdout || "").trim();
+  throw lastResult?.error || new Error("Python is required for state database operations.");
 }
 
 export function getStateDatabasePatchStatus({ dbPath = getStateDbPath(), configPath = getDefaultConfigPath() } = {}) {

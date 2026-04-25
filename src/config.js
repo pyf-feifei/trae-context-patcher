@@ -1,10 +1,14 @@
-import os from "node:os";
+﻿import os from "node:os";
 import path from "node:path";
 import { fileExists, readText, writeText } from "./utils.js";
 
 export function getDefaultConfigPath() {
-  const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
-  return path.join(appData, "TraeContextPatcher", "model-overrides.json");
+  const configRoot =
+    process.env.APPDATA ||
+    (process.platform === "darwin"
+      ? path.join(os.homedir(), "Library", "Application Support")
+      : path.join(os.homedir(), "AppData", "Roaming"));
+  return path.join(configRoot, "TraeContextPatcher", "model-overrides.json");
 }
 
 function normalizeConfig(config) {

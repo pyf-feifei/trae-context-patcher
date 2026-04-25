@@ -1,4 +1,4 @@
-import os from "node:os";
+﻿import os from "node:os";
 import path from "node:path";
 import { BACKUP_SUFFIX, HELPER_FILENAME } from "./constants.js";
 import { fileExists } from "./utils.js";
@@ -11,7 +11,7 @@ function uniquePaths(paths) {
       continue;
     }
     const resolved = path.resolve(item);
-    const key = resolved.toLowerCase();
+    const key = process.platform === "win32" ? resolved.toLowerCase() : resolved;
     if (!seen.has(key)) {
       seen.add(key);
       result.push(resolved);
@@ -20,12 +20,26 @@ function uniquePaths(paths) {
   return result;
 }
 
-export function getTraeRootCandidates() {
+function getWindowsTraeRootCandidates() {
   const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
-  return uniquePaths([
-    process.env.TRAE_INSTALL_DIR,
+  return [
     path.join(localAppData, "Programs", "Trae"),
     path.join(localAppData, "Trae"),
+  ];
+}
+
+function getMacTraeRootCandidates() {
+  return [
+    "/Applications/Trae.app/Contents/Resources/app",
+    path.join(os.homedir(), "Applications", "Trae.app", "Contents", "Resources", "app"),
+  ];
+}
+
+export function getTraeRootCandidates() {
+  return uniquePaths([
+    process.env.TRAE_INSTALL_DIR,
+    ...getWindowsTraeRootCandidates(),
+    ...getMacTraeRootCandidates(),
   ]);
 }
 
@@ -33,9 +47,20 @@ export function getDefaultTraeRoot() {
   return getTraeRootCandidates()[0];
 }
 
+function resolveAppRoot(resolvedTraeRoot) {
+  if (resolvedTraeRoot.endsWith(path.join("Contents", "Resources", "app"))) {
+    return resolvedTraeRoot;
+  }
+  const macAppRoot = path.join(resolvedTraeRoot, "Contents", "Resources", "app");
+  if (fileExists(macAppRoot)) {
+    return macAppRoot;
+  }
+  return path.join(resolvedTraeRoot, "resources", "app");
+}
+
 function buildPaths(traeRoot) {
   const resolvedTraeRoot = path.resolve(traeRoot);
-  const appRoot = path.join(resolvedTraeRoot, "resources", "app");
+  const appRoot = resolveAppRoot(resolvedTraeRoot);
   const outDir = path.join(appRoot, "out");
   const mainJsPath = path.join(outDir, "main.js");
   const helperPath = path.join(outDir, HELPER_FILENAME);
