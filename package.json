@@ -36,6 +36,9 @@
           ]
         }
       ]
+    },
+    "portable": {
+      "artifactName": "${productName}-cn.exe"
     }
   },
   "devDependencies": {
