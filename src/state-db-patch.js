@@ -94,6 +94,37 @@ def target_token(obj):
         return legacy_token
     return None
 
+SOLO_TOOL_PROTOCOL_CONFIG = {
+    'apply_file_path': True,
+    'enable_invalid_json_hint': True,
+    'is_new_pe': True,
+    'native_function_call': True,
+    'native_keep_finish_tool': False,
+    'parallel_tool_calling': False,
+    'use_v2_process': True,
+}
+
+def parse_config(value):
+    if isinstance(value, dict):
+        return dict(value)
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+def apply_tool_protocol(obj):
+    merged = dict(SOLO_TOOL_PROTOCOL_CONFIG)
+    merged.update(parse_config(obj.get('extra_config') or obj.get('custom_config')))
+    merged['native_function_call'] = True
+    merged['native_keep_finish_tool'] = False
+    merged['parallel_tool_calling'] = False
+    serialized = json.dumps(merged, ensure_ascii=False, separators=(',', ':'))
+    obj['custom_config'] = serialized
+    obj['extra_config'] = merged
+
 def patch_model(obj):
     token = target_token(obj)
     if not token:
@@ -104,6 +135,7 @@ def patch_model(obj):
     obj['context_window_sizes'] = [token]
     obj['toolcall_history_max_tokens'] = token
     obj['max_tokens'] = token
+    apply_tool_protocol(obj)
     features = obj.setdefault('features', {})
     cw = features.setdefault('context_windows', {})
     cw['enable'] = True
@@ -189,8 +221,32 @@ def target_token(obj):
         return legacy_token
     return None
 
+def parse_config(value):
+    if isinstance(value, dict):
+        return dict(value)
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+def has_tool_protocol(obj):
+    config = parse_config(obj.get('extra_config') or obj.get('custom_config'))
+    return (
+        config.get('apply_file_path') is True and
+        config.get('enable_invalid_json_hint') is True and
+        config.get('is_new_pe') is True and
+        config.get('native_function_call') is True and
+        config.get('native_keep_finish_tool') is False and
+        config.get('parallel_tool_calling') is False and
+        config.get('use_v2_process') is True and
+        isinstance(obj.get('extra_config'), dict)
+    )
+
 def is_patched(obj, token):
-    return obj.get('prompt_max_tokens') == token and obj.get('selected_max_context_window_size') == token and obj.get('context_window_sizes') == [token] and obj.get('toolcall_history_max_tokens') == token and obj.get('max_tokens') == token
+    return obj.get('prompt_max_tokens') == token and obj.get('selected_max_context_window_size') == token and obj.get('context_window_sizes') == [token] and obj.get('toolcall_history_max_tokens') == token and obj.get('max_tokens') == token and has_tool_protocol(obj)
 
 def walk(value):
     if isinstance(value, dict):

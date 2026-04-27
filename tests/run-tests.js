@@ -206,6 +206,35 @@ return applyOverridesToObject;`)();
   assert.equal(payload.toolcall_history_max_tokens, 1000000);
 });
 
+await runTest("helper adds SOLO tool protocol defaults to configured custom models", async () => {
+  const helperSource = buildHelperSource({ configPath: "C:/tmp/model-overrides.json" });
+  const testableHelperSource = helperSource
+    .replace(/^import .*$/gm, "")
+    .replace(/app\.on\([\s\S]*$/, "");
+  const applyOverridesToObject = new Function(`${testableHelperSource}
+return applyOverridesToObject;`)();
+  const payload = {
+    model: "openai//gpt-5.5",
+    custom_config: "",
+  };
+
+  applyOverridesToObject(payload, {
+    models: {
+      "gpt-5.5": { context_window_tokens: 1000000 },
+    },
+  });
+
+  const config = JSON.parse(payload.custom_config);
+  assert.equal(config.apply_file_path, true);
+  assert.equal(config.enable_invalid_json_hint, true);
+  assert.equal(config.is_new_pe, true);
+  assert.equal(config.native_function_call, true);
+  assert.equal(config.native_keep_finish_tool, false);
+  assert.equal(config.parallel_tool_calling, false);
+  assert.equal(config.use_v2_process, true);
+  assert.deepEqual(payload.extra_config, config);
+});
+
 await runTest("real context patch uses per-model configured token values", async () => {
   const { root, indexJsPath } = createFakeTraeWithRealContextFile("tcp-real-config-");
   const configPath = path.join(root, "overrides.json");
@@ -247,6 +276,30 @@ await runTest("real context patch forwards context window as top-level request f
   const patched = fs.readFileSync(indexJsPath, "utf8");
   assert.match(patched, /custom_model:g,context_window_size:g\.context_window_size,prompt_max_tokens:g\.prompt_max_tokens/);
   assert.match(patched, /toolcall_history_max_tokens:g\.toolcall_history_max_tokens,context_window_sizes:g\.context_window_sizes,max_tokens:g\.max_tokens/);
+});
+
+await runTest("real context patch forwards custom model tool protocol extra_config", async () => {
+  const { root, indexJsPath } = createFakeTraeWithRealContextFile("tcp-real-extra-config-");
+  const configPath = path.join(root, "overrides.json");
+  setModelOverride(configPath, "gpt-5.5", 1000000);
+
+  applyRealContextPatch({ traeRoot: root, configPath });
+
+  const patched = fs.readFileSync(indexJsPath, "utf8");
+  assert.match(patched, /extra_config:o\?\.extra_config\?\?o\?\.custom_config/);
+  assert.match(patched, /extra_config:__tcpContextToolConfig\(r\.extra_config\?\?r\.custom_config\)/);
+});
+
+await runTest("real context patch sends extra_config as object instead of JSON string", async () => {
+  const { root, indexJsPath } = createFakeTraeWithRealContextFile("tcp-real-extra-config-object-");
+  const configPath = path.join(root, "overrides.json");
+  setModelOverride(configPath, "gpt-5.5", 1000000);
+
+  applyRealContextPatch({ traeRoot: root, configPath });
+
+  const patched = fs.readFileSync(indexJsPath, "utf8");
+  assert.match(patched, /return __tcpMerged/);
+  assert.doesNotMatch(patched, /return JSON\.stringify\(__tcpMerged\)/);
 });
 
 await runTest("real context patch rewrites token usage stream max per model", async () => {
@@ -316,6 +369,28 @@ await runTest("real context patch updates an existing patch to configured token 
   assert.match(patched, /u\.max_tokens=__tcpToken/);
   assert.doesNotMatch(patched, /u\.max_tokens=262144/);
   assert.doesNotMatch(patched, /i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,\d+\)\}/);
+});
+
+await runTest("real context patch upgrades legacy installed patch with tool protocol forwarding", async () => {
+  const { root, indexJsPath } = createFakeTraeWithRealContextFile("tcp-real-upgrade-extra-config-");
+  const configPath = path.join(root, "overrides.json");
+  setModelOverride(configPath, "gpt-5.4", 262144);
+  applyRealContextPatch({ traeRoot: root, configPath });
+  const legacyPatched = fs
+    .readFileSync(indexJsPath, "utf8")
+    .replace(",extra_config:o?.extra_config??o?.custom_config", "")
+    .replace(/,u\.extra_config=__tcpToolConfig\(u\.extra_config\?\?o\?\.custom_config\)/g, "")
+    .replace(",extra_config:__tcpContextToolConfig(r.extra_config??r.custom_config)", "");
+  fs.writeFileSync(indexJsPath, legacyPatched, "utf8");
+  assert.equal(getRealContextPatchStatus({ traeRoot: root, configPath }).realContextPatched, false);
+
+  const status = applyRealContextPatch({ traeRoot: root, configPath });
+
+  const upgraded = fs.readFileSync(indexJsPath, "utf8");
+  assert.equal(status.realContextPatched, true);
+  assert.match(upgraded, /extra_config:o\?\.extra_config\?\?o\?\.custom_config/);
+  assert.match(upgraded, /u\.extra_config=__tcpToolConfig/);
+  assert.match(upgraded, /extra_config:__tcpContextToolConfig\(r\.extra_config\?\?r\.custom_config\)/);
 });
 
 
@@ -428,6 +503,54 @@ conn.close()
   const result = spawnSync("python", ["-c", check, dbPath], { encoding: "utf8" });
   assert.equal(result.status, 0);
   assert.deepEqual(result.stdout.trim().split(/\r?\n/), ["1000000", "1000000"]);
+});
+
+await runTest("state database patch adds SOLO tool protocol defaults", async () => {
+  const root = tempDir("tcp-state-tool-protocol-");
+  const dbPath = path.join(root, "state.vscdb");
+  const seed = {
+    models: [
+      {
+        name: "openai//gpt-5.5",
+        display_name: "gpt-5.5",
+        custom_config: "",
+        prompt_max_tokens: 131072,
+      },
+    ],
+  };
+  const setup = `
+import sqlite3, sys, json
+conn = sqlite3.connect(sys.argv[1])
+cur = conn.cursor()
+cur.execute('create table ItemTable (key text primary key, value text)')
+cur.execute('insert into ItemTable values (?, ?)', ('model-list', ${JSON.stringify(JSON.stringify(seed))}))
+conn.commit()
+conn.close()
+`;
+  const { spawnSync } = await import("node:child_process");
+  assert.equal(spawnSync("python", ["-c", setup, dbPath], { encoding: "utf8" }).status, 0);
+  const configPath = path.join(root, "overrides.json");
+  setModelOverride(configPath, "gpt-5.5", 1000000);
+
+  const status = applyStateDatabasePatch({ dbPath, configPath });
+
+  assert.equal(status.stateDbPatched, true);
+  const check = `
+import sqlite3, sys, json
+conn = sqlite3.connect(sys.argv[1])
+value = conn.execute('select value from ItemTable where key=?', ('model-list',)).fetchone()[0]
+item = json.loads(value)['models'][0]
+config = json.loads(item['custom_config'])
+print(config['native_function_call'])
+print(config['parallel_tool_calling'])
+print(config['native_keep_finish_tool'])
+print(isinstance(item['extra_config'], dict))
+print(item['extra_config']['native_function_call'])
+conn.close()
+`;
+  const result = spawnSync("python", ["-c", check, dbPath], { encoding: "utf8" });
+  assert.equal(result.status, 0);
+  assert.deepEqual(result.stdout.trim().split(/\r?\n/), ["True", "False", "False", "True", "True"]);
 });
 
 await runTest("state database patch keeps configured tokens per model", async () => {
