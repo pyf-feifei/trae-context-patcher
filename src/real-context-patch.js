@@ -7,31 +7,50 @@ import { resolveTraePaths } from "./trae-paths.js";
 
 const TARGET_HOST = "spongyicybulk-clip.hf.space";
 const FALLBACK_TARGET_TOKENS = 262144;
+const FALLBACK_TARGET_MODEL = "gpt-5.4";
+const REQUEST_MODEL_FIELDS = 'context_window_size:o?.selected_max_context_window_size??("number"==typeof o?.context_window_size?o.context_window_size:o?.context_window_size?.default),prompt_max_tokens:o?.prompt_max_tokens,toolcall_history_max_tokens:o?.toolcall_history_max_tokens,context_window_sizes:o?.context_window_sizes??(o?.selected_max_context_window_size?[o.selected_max_context_window_size]:void 0),max_tokens:o?.max_tokens,region:o?.region,sk:o?.sk||"",auth_type:o?.auth_type||0}';
+const SESSION_TOKEN_RETURN = ';let d=this.configurationService.getConfiguration("ai_assistant.request.aws_session_token")||void 0;return d&&(u.session_token=d),u}';
+const CONTEXT_VARIABLES_OLD = 'let t;let i=this.getCurrentModelName(),r=this._sessionRelationStore.getCurrentModel(),n=r?.prompt_max_tokens,o=this._i18nService.getLanguageConfig(),a=this.getAutoRunConfig(e),{projectId:s}=this._projectStore.getState();return r&&(t={provider:r.provider,multimodal:!0===r.multimodal,config_name:r.name,display_model_name:r.display_name,ak:r.ak,base_url:r.base_url,use_remote_service:!r.client_connect,config_source:r.config_source,prompt_max_tokens:n,region:r.region,sk:r.sk,auth_type:r.auth_type}),{project_id:s,model_name:i,icube_language:o.platform.toLocaleLowerCase(),icube_ai_language:this.getCurrentAILanguage(),chat_session_id:e??this.currentSession?.sessionId,custom_model:t,workspace_folder:this._workspaceFacade.getWorkspacePathBySessionId(e??this.currentSession?.sessionId),confirm_config:a}}';
+const TOKEN_USAGE_PARSER_OLD = 'parse(e,t){return t.firstTokenUsageReported||(t.firstTokenUsageReported=!0,this._chatStreamFirstTokenReporter.reportTokenUsage(e,t)),e}handleSteamingResult';
+const HISTORY_TOKEN_USAGE_OLD = 'tokenUsage:e.token_usage,fromAppend:e.from_append_msg';
+const USAGE_UI_SELECTOR_OLD = '{tokenUsage:i,agentMessageId:r,agentProcessSupport:n,turnId:o}=(0,JP.Sz)(Jj,e=>({tokenUsage:e?.tokenUsage,agentMessageId:e?.agentMessageId,agentProcessSupport:e?.agentProcessSupport,turnId:e?.userMessageId||""}))';
+const USAGE_UI_SELECTOR_NEW = '{tokenUsage:i,agentMessageId:r,agentProcessSupport:n,turnId:o,modelSmartSelectionMeta:m,modelInfo:c}=(0,JP.Sz)(Jj,e=>({tokenUsage:e?.tokenUsage,agentMessageId:e?.agentMessageId,agentProcessSupport:e?.agentProcessSupport,turnId:e?.userMessageId||"",modelSmartSelectionMeta:e?.modelSmartSelectionMeta,modelInfo:e?.modelInfo}))';
+const USAGE_UI_NULL_CHECK = 'if(!l||!(i?.last_turn_total_tokens&&i?.max_tokens))return null;let f=i?.last_turn_total_tokens/i?.max_tokens';
+const REQUEST_OBJECT_TOP_LEVEL_CONTEXT = 'custom_model:g,context_window_size:g.context_window_size,prompt_max_tokens:g.prompt_max_tokens,toolcall_history_max_tokens:g.toolcall_history_max_tokens,context_window_sizes:g.context_window_sizes,max_tokens:g.max_tokens,terminal_context';
+const NATIVE_CONTEXT_TOP_LEVEL_CONTEXT = 'custom_model:t,context_window_size:t?.context_window_size,prompt_max_tokens:t?.prompt_max_tokens,toolcall_history_max_tokens:t?.toolcall_history_max_tokens,context_window_sizes:t?.context_window_sizes,max_tokens:t?.max_tokens,workspace_folder:';
 
-function getConfiguredTargetTokens(configPath = getDefaultConfigPath()) {
+function normalizeModelName(value) {
+  if (typeof value !== "string") return "";
+  return value.trim().toLowerCase();
+}
+
+function bareModelName(value) {
+  const normalized = normalizeModelName(value);
+  if (!normalized) return "";
+  const parts = normalized.split("//");
+  return parts[parts.length - 1];
+}
+
+function addContextWindowTarget(targets, modelId, tokens) {
+  const normalized = normalizeModelName(modelId);
+  if (!normalized || !Number.isInteger(tokens) || tokens <= 0) return;
+  targets[normalized] = tokens;
+  const bare = bareModelName(normalized);
+  if (!bare) return;
+  targets[bare] = tokens;
+  targets[`openai//${bare}`] = tokens;
+}
+
+function getConfiguredContextWindows(configPath = getDefaultConfigPath()) {
   const config = loadConfig(configPath);
-  const exact = config.models["gpt-5.4"]?.context_window_tokens;
-  if (Number.isInteger(exact) && exact > 0) return exact;
-  const first = Object.values(config.models || {})
-    .map((item) => item?.context_window_tokens)
-    .find((item) => Number.isInteger(item) && item > 0);
-  return first || FALLBACK_TARGET_TOKENS;
-}
-
-function replaceTokenLiterals(source, token) {
-  return source.replace(/262144/g, String(token));
-}
-
-function retargetExistingPatch(source, targetTokens) {
-  return source
-    .replace(
-      /u\.context_window_size=\d+,u\.prompt_max_tokens=\d+,u\.toolcall_history_max_tokens=\d+,u\.context_window_sizes=\[\d+\],u\.max_tokens=\d+/g,
-      `u.context_window_size=${targetTokens},u.prompt_max_tokens=${targetTokens},u.toolcall_history_max_tokens=${targetTokens},u.context_window_sizes=[${targetTokens}],u.max_tokens=${targetTokens}`,
-    )
-    .replace(
-      /i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,\d+\)\}/g,
-      `i={...i,max_tokens:Math.max(i.max_tokens||0,${targetTokens})}`,
-    );
+  const targets = {};
+  for (const [modelId, override] of Object.entries(config.models || {})) {
+    addContextWindowTarget(targets, modelId, override?.context_window_tokens);
+  }
+  if (Object.keys(targets).length === 0) {
+    addContextWindowTarget(targets, FALLBACK_TARGET_MODEL, FALLBACK_TARGET_TOKENS);
+  }
+  return targets;
 }
 
 function getAiModulesChatIndexPath(traeRoot) {
@@ -76,6 +95,7 @@ function backupHasPatchMarkers(backupPath) {
   const source = readText(backupPath);
   return source.includes("custom_model:g,terminal_context") ||
     source.includes("prompt_max_tokens:o?.prompt_max_tokens") ||
+    source.includes("const __tcpMap=") ||
     source.includes("i={...i,max_tokens:Math.max(i.max_tokens||0,262144)}") ||
     /i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,\d+\)\}/.test(source);
 }
@@ -88,13 +108,107 @@ function getAvailableBackupPath(indexJsPath) {
   return getLegacyBackupPaths(indexJsPath)[0];
 }
 
-function patchRequestModelInfo(source, targetTokens) {
-  const oldSnippet = 'context_window_size:o?.selected_max_context_window_size,region:o?.region,sk:o?.sk||"",auth_type:o?.auth_type||0},d=this.configurationService.getConfiguration("ai_assistant.request.aws_session_token")||void 0;return d&&(u.session_token=d),u}';
-  const newSnippet = replaceTokenLiterals('context_window_size:o?.selected_max_context_window_size??("number"==typeof o?.context_window_size?o.context_window_size:o?.context_window_size?.default),prompt_max_tokens:o?.prompt_max_tokens,toolcall_history_max_tokens:o?.toolcall_history_max_tokens,context_window_sizes:o?.context_window_sizes??(o?.selected_max_context_window_size?[o.selected_max_context_window_size]:void 0),max_tokens:o?.max_tokens,region:o?.region,sk:o?.sk||"",auth_type:o?.auth_type||0};(u.config_name==="openai//gpt-5.4"||u.display_model_name==="gpt-5.4"||u.base_url?.includes("spongyicybulk-clip.hf.space"))&&(u.context_window_size=262144,u.prompt_max_tokens=262144,u.toolcall_history_max_tokens=262144,u.context_window_sizes=[262144],u.max_tokens=262144);let d=this.configurationService.getConfiguration("ai_assistant.request.aws_session_token")||void 0;return d&&(u.session_token=d),u}', targetTokens);
-  if (source.includes(newSnippet)) return source;
-  if (source.includes("prompt_max_tokens:o?.prompt_max_tokens") && source.includes("u.max_tokens=")) {
-    return retargetExistingPatch(source, targetTokens);
+function buildRequestContextPatch(contextWindows) {
+  const mapLiteral = JSON.stringify(contextWindows);
+  return `;(()=>{const __tcpMap=${mapLiteral},__tcpNorm=__tcpValue=>"string"==typeof __tcpValue?__tcpValue.trim().toLowerCase():"",__tcpBare=__tcpValue=>__tcpNorm(__tcpValue).split("//").pop(),__tcpToken=__tcpMap[__tcpNorm(u.config_name)]??__tcpMap[__tcpNorm(u.display_model_name)]??__tcpMap[__tcpNorm(o?.name)]??__tcpMap[__tcpNorm(o?.display_name)]??__tcpMap[__tcpBare(u.config_name)]??__tcpMap[__tcpBare(u.display_model_name)]??__tcpMap[__tcpBare(o?.name)]??__tcpMap[__tcpBare(o?.display_name)]??(u.base_url?.includes("${TARGET_HOST}")?__tcpMap["${FALLBACK_TARGET_MODEL}"]:void 0);__tcpToken&&(u.context_window_size=__tcpToken,u.prompt_max_tokens=__tcpToken,u.toolcall_history_max_tokens=__tcpToken,u.context_window_sizes=[__tcpToken],u.max_tokens=__tcpToken)})()`;
+}
+
+function buildNativeContextVariablesSnippet(contextWindows) {
+  const mapLiteral = JSON.stringify(contextWindows);
+  return `let t;let i=this.getCurrentModelName(),r=this._sessionRelationStore.getCurrentModel(),n=r?.prompt_max_tokens;(()=>{const __tcpContextMap=${mapLiteral},__tcpContextNorm=__tcpValue=>"string"==typeof __tcpValue?__tcpValue.trim().toLowerCase():"",__tcpContextBare=__tcpValue=>__tcpContextNorm(__tcpValue).split("//").pop(),__tcpContextToken=__tcpContextMap[__tcpContextNorm(i)]??__tcpContextMap[__tcpContextNorm(r?.name)]??__tcpContextMap[__tcpContextNorm(r?.display_name)]??__tcpContextMap[__tcpContextNorm(r?.config_name)]??__tcpContextMap[__tcpContextBare(i)]??__tcpContextMap[__tcpContextBare(r?.name)]??__tcpContextMap[__tcpContextBare(r?.display_name)]??__tcpContextMap[__tcpContextBare(r?.config_name)]??(r?.base_url?.includes("${TARGET_HOST}")?__tcpContextMap["${FALLBACK_TARGET_MODEL}"]:void 0);__tcpContextToken&&(n=__tcpContextToken)})();let o=this._i18nService.getLanguageConfig(),a=this.getAutoRunConfig(e),{projectId:s}=this._projectStore.getState();return r&&(t={provider:r.provider,multimodal:!0===r.multimodal,config_name:r.name,display_model_name:r.display_name,ak:r.ak,base_url:r.base_url,use_remote_service:!r.client_connect,config_source:r.config_source,prompt_max_tokens:n,context_window_size:n,selected_max_context_window_size:n,context_window_sizes:[n],toolcall_history_max_tokens:n,max_tokens:n,region:r.region,sk:r.sk,auth_type:r.auth_type}),{project_id:s,model_name:i,icube_language:o.platform.toLocaleLowerCase(),icube_ai_language:this.getCurrentAILanguage(),chat_session_id:e??this.currentSession?.sessionId,custom_model:t,context_window_size:t?.context_window_size,prompt_max_tokens:t?.prompt_max_tokens,toolcall_history_max_tokens:t?.toolcall_history_max_tokens,context_window_sizes:t?.context_window_sizes,max_tokens:t?.max_tokens,workspace_folder:this._workspaceFacade.getWorkspacePathBySessionId(e??this.currentSession?.sessionId),confirm_config:a}}`;
+}
+
+function patchNativeContextTopLevelFields(source) {
+  if (source.includes(NATIVE_CONTEXT_TOP_LEVEL_CONTEXT)) return source;
+  return source.replace(
+    "custom_model:t,workspace_folder:",
+    NATIVE_CONTEXT_TOP_LEVEL_CONTEXT,
+  );
+}
+
+function patchNativeContextVariables(source, contextWindows) {
+  const newSnippet = buildNativeContextVariablesSnippet(contextWindows);
+  if (source.includes(newSnippet)) return patchNativeContextTopLevelFields(source);
+  let patched = source;
+  if (source.includes("const __tcpContextMap=")) {
+    patched = source.replace(/const __tcpContextMap=\{[^}]*\}/g, `const __tcpContextMap=${JSON.stringify(contextWindows)}`);
+    return patchNativeContextTopLevelFields(patched);
   }
+  if (!source.includes(CONTEXT_VARIABLES_OLD)) return patchNativeContextTopLevelFields(source);
+  patched = source.replace(CONTEXT_VARIABLES_OLD, newSnippet);
+  return patchNativeContextTopLevelFields(patched);
+}
+
+function buildTokenUsageParserPatch(contextWindows) {
+  const mapLiteral = JSON.stringify(contextWindows);
+  return `parse(e,t){(()=>{const __tcpUsageMap=${mapLiteral},__tcpUsageNorm=__tcpValue=>"string"==typeof __tcpValue?__tcpValue.trim().toLowerCase():"",__tcpUsageBare=__tcpValue=>__tcpUsageNorm(__tcpValue).split("//").pop(),__tcpUsagePick=__tcpValue=>__tcpUsageMap[__tcpUsageNorm(__tcpValue)]??__tcpUsageMap[__tcpUsageBare(__tcpValue)],__tcpUsageToken=__tcpUsagePick(t?.chatFirstTokenPayload?.model)??__tcpUsagePick(t?.requestObject?.model_name)??__tcpUsagePick(t?.requestObject?.custom_model?.config_name)??__tcpUsagePick(t?.requestObject?.custom_model?.display_model_name)??__tcpUsagePick(t?.requestObject?.custom_model?.name)??__tcpUsagePick(t?.requestObject?.custom_model?.model);__tcpUsageToken&&(e={...e,max_tokens:__tcpUsageToken})})();return t.firstTokenUsageReported||(t.firstTokenUsageReported=!0,this._chatStreamFirstTokenReporter.reportTokenUsage(e,t)),e}handleSteamingResult`;
+}
+
+function patchTokenUsageStreamParser(source, contextWindows) {
+  const newSnippet = buildTokenUsageParserPatch(contextWindows);
+  if (source.includes(newSnippet)) return source;
+  if (source.includes("const __tcpUsageMap=")) {
+    return source.replace(/const __tcpUsageMap=\{[^}]*\}/g, `const __tcpUsageMap=${JSON.stringify(contextWindows)}`);
+  }
+  if (!source.includes(TOKEN_USAGE_PARSER_OLD)) return source;
+  return source.replace(TOKEN_USAGE_PARSER_OLD, newSnippet);
+}
+
+function buildHistoryTokenUsagePatch(contextWindows) {
+  const mapLiteral = JSON.stringify(contextWindows);
+  return `tokenUsage:(()=>{let __tcpHistoryUsage=e.token_usage;const __tcpHistoryUsageMap=${mapLiteral},__tcpHistoryNorm=__tcpValue=>"string"==typeof __tcpValue?__tcpValue.trim().toLowerCase():"",__tcpHistoryBare=__tcpValue=>__tcpHistoryNorm(__tcpValue).split("//").pop(),__tcpHistoryPick=__tcpValue=>__tcpHistoryUsageMap[__tcpHistoryNorm(__tcpValue)]??__tcpHistoryUsageMap[__tcpHistoryBare(__tcpValue)],__tcpHistoryToken=__tcpHistoryPick(e?.model_smart_selection_meta?.config_name)??__tcpHistoryPick(e?.model_info?.config_name)??__tcpHistoryPick(e?.model_info?.display_model_name)??__tcpHistoryPick(e?.model_name)??__tcpHistoryPick(e?.provider_model_name);return __tcpHistoryUsage&&__tcpHistoryToken?{...__tcpHistoryUsage,max_tokens:__tcpHistoryToken}:__tcpHistoryUsage})(),fromAppend:e.from_append_msg`;
+}
+
+function patchHistoryTokenUsage(source, contextWindows) {
+  const newSnippet = buildHistoryTokenUsagePatch(contextWindows);
+  if (source.includes(newSnippet)) return source;
+  if (source.includes("const __tcpHistoryUsageMap=")) {
+    return source.replace(/const __tcpHistoryUsageMap=\{[^}]*\}/g, `const __tcpHistoryUsageMap=${JSON.stringify(contextWindows)}`);
+  }
+  if (!source.includes(HISTORY_TOKEN_USAGE_OLD)) return source;
+  return source.replace(HISTORY_TOKEN_USAGE_OLD, newSnippet);
+}
+
+function buildUsageUiCorrection(contextWindows) {
+  const mapLiteral = JSON.stringify(contextWindows);
+  const maxConfiguredTokens = Math.max(...Object.values(contextWindows));
+  return `if(!l||!(i?.last_turn_total_tokens&&i?.max_tokens))return null;i=(()=>{const __tcpUiUsageMap=${mapLiteral},__tcpUiMax=${maxConfiguredTokens},__tcpUiNorm=__tcpValue=>"string"==typeof __tcpValue?__tcpValue.trim().toLowerCase():"",__tcpUiBare=__tcpValue=>__tcpUiNorm(__tcpValue).split("//").pop(),__tcpUiPick=__tcpValue=>__tcpUiUsageMap[__tcpUiNorm(__tcpValue)]??__tcpUiUsageMap[__tcpUiBare(__tcpValue)],__tcpUiToken=__tcpUiPick(m?.config_name)??__tcpUiPick(c?.config_name)??__tcpUiPick(c?.display_model_name)??__tcpUiPick(c?.name)??__tcpUiPick(c?.model_name);return __tcpUiToken?{...i,max_tokens:__tcpUiToken}:i.max_tokens>__tcpUiMax?{...i,max_tokens:__tcpUiMax}:i})();let f=i?.last_turn_total_tokens/i?.max_tokens`;
+}
+
+function patchUsageUiMaxTokens(source, contextWindows) {
+  const mapLiteral = JSON.stringify(contextWindows);
+  const maxConfiguredTokens = Math.max(...Object.values(contextWindows));
+  if (source.includes("const __tcpUiUsageMap=")) {
+    return source
+      .replace(/const __tcpUiUsageMap=\{[^}]*\}/g, `const __tcpUiUsageMap=${mapLiteral}`)
+      .replace(/__tcpUiMax=\d+/g, `__tcpUiMax=${maxConfiguredTokens}`);
+  }
+  if (!source.includes(USAGE_UI_SELECTOR_OLD)) return source;
+  let patched = source.replace(USAGE_UI_SELECTOR_OLD, USAGE_UI_SELECTOR_NEW);
+  const selectorIndex = patched.indexOf(USAGE_UI_SELECTOR_NEW);
+  const nullCheckIndex = patched.indexOf(USAGE_UI_NULL_CHECK, selectorIndex);
+  if (nullCheckIndex === -1) return patched;
+  return `${patched.slice(0, nullCheckIndex)}${buildUsageUiCorrection(contextWindows)}${patched.slice(nullCheckIndex + USAGE_UI_NULL_CHECK.length)}`;
+}
+
+function buildRequestModelInfoSnippet(contextWindows) {
+  return `${REQUEST_MODEL_FIELDS}${buildRequestContextPatch(contextWindows)}${SESSION_TOKEN_RETURN}`;
+}
+
+function patchRequestModelInfo(source, contextWindows) {
+  const oldSnippet = 'context_window_size:o?.selected_max_context_window_size,region:o?.region,sk:o?.sk||"",auth_type:o?.auth_type||0},d=this.configurationService.getConfiguration("ai_assistant.request.aws_session_token")||void 0;return d&&(u.session_token=d),u}';
+  const newSnippet = buildRequestModelInfoSnippet(contextWindows);
+  if (source.includes(newSnippet)) return source;
+
+  const patchedFieldsStart = source.indexOf(REQUEST_MODEL_FIELDS);
+  if (patchedFieldsStart !== -1) {
+    const patchedFieldsEnd = source.indexOf(SESSION_TOKEN_RETURN, patchedFieldsStart);
+    if (patchedFieldsEnd === -1) {
+      throw new Error("未找到真实请求模型字段构造结束位置，可能 Trae 版本已变化。");
+    }
+    return `${source.slice(0, patchedFieldsStart)}${newSnippet}${source.slice(patchedFieldsEnd + SESSION_TOKEN_RETURN.length)}`;
+  }
+
   if (!source.includes(oldSnippet)) {
     throw new Error("未找到真实请求模型字段构造位置，可能 Trae 版本已变化。");
   }
@@ -106,25 +220,34 @@ function patchCustomModelOmit(source) {
   const oldSnippetEmptyTerminal = 'model_name:g.config_name,custom_model:j4(g,["context_window_size"]),terminal_context:[]';
   const newSnippet = 'model_name:g.config_name,custom_model:g,terminal_context:w';
   const newSnippetEmptyTerminal = 'model_name:g.config_name,custom_model:g,terminal_context:[]';
+  if (source.includes(REQUEST_OBJECT_TOP_LEVEL_CONTEXT)) return source;
   if (source.includes(newSnippet) || source.includes(newSnippetEmptyTerminal)) return source;
   if (source.includes(oldSnippet)) return source.replace(oldSnippet, newSnippet);
   if (source.includes(oldSnippetEmptyTerminal)) return source.replace(oldSnippetEmptyTerminal, newSnippetEmptyTerminal);
   throw new Error("未找到 custom_model 上下文字段删除位置，可能 Trae 版本已变化。");
 }
 
-function patchTokenUsageTooltip(source, targetTokens) {
-  const marker = `i={...i,max_tokens:Math.max(i.max_tokens||0,${targetTokens})};let f=i?.last_turn_total_tokens/i?.max_tokens`;
-  if (source.includes(marker)) return source;
-  if (/i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,\d+\)\};let f=i\?\.last_turn_total_tokens\/i\?\.max_tokens/.test(source)) {
-    return retargetExistingPatch(source, targetTokens);
-  }
+function patchRequestObjectTopLevelContext(source) {
+  if (source.includes(REQUEST_OBJECT_TOP_LEVEL_CONTEXT)) return source;
+  const patched = source.replaceAll(
+    "custom_model:g,terminal_context",
+    REQUEST_OBJECT_TOP_LEVEL_CONTEXT,
+  );
+  if (patched !== source) return patched;
+  throw new Error("未找到请求对象 context_window_size 透传位置，可能 Trae 版本已变化。");
+}
 
-  const oldSnippet = "if(!l||!(i?.last_turn_total_tokens&&i?.max_tokens))return null;let f=i?.last_turn_total_tokens/i?.max_tokens";
-  const newSnippet = `if(!l||!(i?.last_turn_total_tokens&&i?.max_tokens))return null;i={...i,max_tokens:Math.max(i.max_tokens||0,${targetTokens})};let f=i?.last_turn_total_tokens/i?.max_tokens`;
-  if (!source.includes(oldSnippet)) {
+function patchTokenUsageTooltip(source) {
+  const forcedMaxTokensRegex = /(if\(!l\|\|!\(i\?\.last_turn_total_tokens&&i\?\.max_tokens\)\)return null;)i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,\d+\)\};(let f=i\?\.last_turn_total_tokens\/i\?\.max_tokens)/g;
+  const cleaned = source.replace(forcedMaxTokensRegex, "$1$2");
+  const expectedSnippet = "if(!l||!(i?.last_turn_total_tokens&&i?.max_tokens))return null;let f=i?.last_turn_total_tokens/i?.max_tokens";
+  if (cleaned.includes("const __tcpUiUsageMap=") && cleaned.includes("let f=i?.last_turn_total_tokens/i?.max_tokens")) {
+    return cleaned;
+  }
+  if (!cleaned.includes(expectedSnippet)) {
     throw new Error("未找到上下文使用率 UI 显示位置，可能 Trae 版本已变化。");
   }
-  return source.replace(oldSnippet, newSnippet);
+  return cleaned;
 }
 
 
@@ -137,8 +260,27 @@ function patchTooltipTotalFormat(source) {
 }
 
 
-function patchSource(source, targetTokens) {
-  return patchTooltipTotalFormat(patchTokenUsageTooltip(patchCustomModelOmit(patchRequestModelInfo(source, targetTokens)), targetTokens));
+function patchSource(source, contextWindows) {
+  return patchTooltipTotalFormat(
+    patchTokenUsageTooltip(
+      patchUsageUiMaxTokens(
+        patchTokenUsageStreamParser(
+          patchHistoryTokenUsage(
+            patchNativeContextVariables(
+              patchRequestObjectTopLevelContext(
+                patchCustomModelOmit(patchRequestModelInfo(source, contextWindows)),
+              ),
+              contextWindows,
+            ),
+            contextWindows,
+          ),
+          contextWindows,
+        ),
+        contextWindows,
+      ),
+      contextWindows,
+    ),
+  );
 }
 
 export function getRealContextPatchStatus({ traeRoot, configPath = getDefaultConfigPath() } = {}) {
@@ -146,13 +288,20 @@ export function getRealContextPatchStatus({ traeRoot, configPath = getDefaultCon
   const backupPath = getBackupPath(indexJsPath);
   const exists = fileExists(indexJsPath);
   const source = exists ? readText(indexJsPath) : "";
-  const targetTokens = getConfiguredTargetTokens(configPath);
+  const contextWindows = getConfiguredContextWindows(configPath);
+  const mapLiteral = JSON.stringify(contextWindows);
+  const hasForcedTooltipMax = /i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,\d+\)\}/.test(source);
   const realContextPatched =
-    source.includes("custom_model:g,terminal_context") &&
+    source.includes(REQUEST_OBJECT_TOP_LEVEL_CONTEXT) &&
     source.includes("prompt_max_tokens:o?.prompt_max_tokens") &&
-    source.includes(TARGET_HOST) &&
-    source.includes(`u.max_tokens=${targetTokens}`) &&
-    source.includes(`i={...i,max_tokens:Math.max(i.max_tokens||0,${targetTokens})}`);
+    source.includes(`const __tcpMap=${mapLiteral}`) &&
+    source.includes("u.max_tokens=__tcpToken") &&
+    source.includes(`const __tcpContextMap=${mapLiteral}`) &&
+    source.includes(`const __tcpUsageMap=${mapLiteral}`) &&
+    source.includes(`const __tcpHistoryUsageMap=${mapLiteral}`) &&
+    source.includes(`const __tcpUiUsageMap=${mapLiteral}`) &&
+    source.includes(NATIVE_CONTEXT_TOP_LEVEL_CONTEXT) &&
+    !hasForcedTooltipMax;
   return {
     realContextIndexPath: indexJsPath,
     realContextBackupPath: backupPath,
@@ -171,7 +320,7 @@ export function applyRealContextPatch({ traeRoot, configPath = getDefaultConfigP
   if (!status.realContextBackupExists) {
     fs.copyFileSync(status.realContextIndexPath, status.realContextBackupPath);
   }
-  const patched = patchSource(source, getConfiguredTargetTokens(configPath));
+  const patched = patchSource(source, getConfiguredContextWindows(configPath));
   if (patched !== source) {
     writeText(status.realContextIndexPath, patched);
   }

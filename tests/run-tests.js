@@ -43,7 +43,7 @@ function createFakeTraeWithRealContextFile(prefix = "tcp-real-") {
   );
   fs.mkdirSync(distDir, { recursive: true });
   const indexJsPath = path.join(distDir, "index.js");
-  const source = 'class j9{createChatRequestModelInfo(e,t,i,r){let o={name:"openai//gpt-5.4",display_name:"gpt-5.4",base_url:"https://spongyicybulk-clip.hf.space/v1/chat/completions"};let u={provider:o?.provider||"",config_name:o?.name||i||"",display_model_name:o?.display_name,multimodal:o?.multimodal===!0,ak:o?.ak||"",use_remote_service:!o?.client_connect,is_preset:false,config_source:o?.config_source??3,base_url:o?.base_url||"",context_window_size:o?.selected_max_context_window_size,region:o?.region,sk:o?.sk||"",auth_type:o?.auth_type||0},d=this.configurationService.getConfiguration("ai_assistant.request.aws_session_token")||void 0;return d&&(u.session_token=d),u}createChatRequestObject(){let g={config_name:"openai//gpt-5.4",context_window_size:262144};return{model_name:g.config_name,custom_model:j4(g,["context_window_size"]),terminal_context:[]}}renderUsage(l,i){if(!l||!(i?.last_turn_total_tokens&&i?.max_tokens))return null;let f=i?.last_turn_total_tokens/i?.max_tokens,_=`${(100*f).toFixed(0)}%`;return{percent:_,total:`${i.max_tokens/1e3}K`}}}';
+  const source = 'class j9{createChatRequestModelInfo(e,t,i,r){let o={name:"openai//gpt-5.4",display_name:"gpt-5.4",base_url:"https://spongyicybulk-clip.hf.space/v1/chat/completions"};let u={provider:o?.provider||"",config_name:o?.name||i||"",display_model_name:o?.display_name,multimodal:o?.multimodal===!0,ak:o?.ak||"",use_remote_service:!o?.client_connect,is_preset:false,config_source:o?.config_source??3,base_url:o?.base_url||"",context_window_size:o?.selected_max_context_window_size,region:o?.region,sk:o?.sk||"",auth_type:o?.auth_type||0},d=this.configurationService.getConfiguration("ai_assistant.request.aws_session_token")||void 0;return d&&(u.session_token=d),u}createChatRequestObject(){let g={config_name:"openai//gpt-5.4",context_window_size:262144};return{model_name:g.config_name,custom_model:j4(g,["context_window_size"]),terminal_context:[]}}getContextVariables(e){let t;let i=this.getCurrentModelName(),r=this._sessionRelationStore.getCurrentModel(),n=r?.prompt_max_tokens,o=this._i18nService.getLanguageConfig(),a=this.getAutoRunConfig(e),{projectId:s}=this._projectStore.getState();return r&&(t={provider:r.provider,multimodal:!0===r.multimodal,config_name:r.name,display_model_name:r.display_name,ak:r.ak,base_url:r.base_url,use_remote_service:!r.client_connect,config_source:r.config_source,prompt_max_tokens:n,region:r.region,sk:r.sk,auth_type:r.auth_type}),{project_id:s,model_name:i,icube_language:o.platform.toLocaleLowerCase(),icube_ai_language:this.getCurrentAILanguage(),chat_session_id:e??this.currentSession?.sessionId,custom_model:t,workspace_folder:this._workspaceFacade.getWorkspacePathBySessionId(e??this.currentSession?.sessionId),confirm_config:a}}renderUsage(l,i){if(!l||!(i?.last_turn_total_tokens&&i?.max_tokens))return null;let f=i?.last_turn_total_tokens/i?.max_tokens,_=`${(100*f).toFixed(0)}%`;return{percent:_,total:`${i.max_tokens/1e3}K`}}}let e_3=sX().memo(({isLatest:e})=>{let{localize:t}=Cb(),{tokenUsage:i,agentMessageId:r,agentProcessSupport:n,turnId:o}=(0,JP.Sz)(Jj,e=>({tokenUsage:e?.tokenUsage,agentMessageId:e?.agentMessageId,agentProcessSupport:e?.agentProcessSupport,turnId:e?.userMessageId||""})),a=uB(M0),s=uB(jP),l=e_4(e);if(!l||!(i?.last_turn_total_tokens&&i?.max_tokens))return null;let f=i?.last_turn_total_tokens/i?.max_tokens,_=`${(100*f).toFixed(0)}%`;return sX().createElement("div",null)});class z3 extends DV{parse(e,t){return t.firstTokenUsageReported||(t.firstTokenUsageReported=!0,this._chatStreamFirstTokenReporter.reportTokenUsage(e,t)),e}handleSteamingResult(e,t){t.agentMessageId&&this.storeService.updateMessage(t.sessionId,t.agentMessageId,{tokenUsage:e})}}class hp{parse(e,t){let h={content:"",tokenUsage:e.token_usage,fromAppend:e.from_append_msg};return h}}';
   fs.writeFileSync(indexJsPath, source, "utf8");
   return { ...fake, indexJsPath, source };
 }
@@ -181,17 +181,109 @@ return applyOverridesToObject;`)();
   assert.equal(payload.contextWindowTokens, 262144);
 });
 
-await runTest("real context patch uses configured token value", async () => {
+await runTest("helper overwrites stale toolcall history max tokens", async () => {
+  const helperSource = buildHelperSource({ configPath: "C:/tmp/model-overrides.json" });
+  const testableHelperSource = helperSource
+    .replace(/^import .*$/gm, "")
+    .replace(/app\.on\([\s\S]*$/, "");
+  const applyOverridesToObject = new Function(`${testableHelperSource}
+return applyOverridesToObject;`)();
+  const payload = {
+    model: "openai//gpt-5.5",
+    prompt_max_tokens: 2000000,
+    max_tokens: 2000000,
+    toolcall_history_max_tokens: 2000000,
+  };
+
+  applyOverridesToObject(payload, {
+    models: {
+      "gpt-5.5": { context_window_tokens: 1000000 },
+    },
+  });
+
+  assert.equal(payload.prompt_max_tokens, 1000000);
+  assert.equal(payload.max_tokens, 1000000);
+  assert.equal(payload.toolcall_history_max_tokens, 1000000);
+});
+
+await runTest("real context patch uses per-model configured token values", async () => {
   const { root, indexJsPath } = createFakeTraeWithRealContextFile("tcp-real-config-");
   const configPath = path.join(root, "overrides.json");
-  setModelOverride(configPath, "gpt-5.4", 1000000);
+  setModelOverride(configPath, "gpt-5.4", 262144);
+  setModelOverride(configPath, "gpt-5.5", 1000000);
 
   applyRealContextPatch({ traeRoot: root, configPath });
 
   const patched = fs.readFileSync(indexJsPath, "utf8");
-  assert.match(patched, /u\.max_tokens=1000000/);
-  assert.match(patched, /i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,1000000\)\}/);
+  assert.match(patched, /const __tcpMap=\{"gpt-5\.4":262144,"openai\/\/gpt-5\.4":262144,"gpt-5\.5":1000000,"openai\/\/gpt-5\.5":1000000\}/);
+  assert.match(patched, /u\.max_tokens=__tcpToken/);
   assert.doesNotMatch(patched, /u\.max_tokens=262144/);
+  assert.doesNotMatch(patched, /i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,262144\)\}/);
+});
+
+await runTest("real context patch passes per-model max tokens to native context variables", async () => {
+  const { root, indexJsPath } = createFakeTraeWithRealContextFile("tcp-real-native-context-");
+  const configPath = path.join(root, "overrides.json");
+  setModelOverride(configPath, "gpt-5.4", 262144);
+  setModelOverride(configPath, "gpt-5.5", 1000000);
+
+  applyRealContextPatch({ traeRoot: root, configPath });
+
+  const patched = fs.readFileSync(indexJsPath, "utf8");
+  assert.match(patched, /const __tcpContextMap=\{"gpt-5\.4":262144,"openai\/\/gpt-5\.4":262144,"gpt-5\.5":1000000,"openai\/\/gpt-5\.5":1000000\}/);
+  assert.match(patched, /n=__tcpContextToken/);
+  assert.match(patched, /context_window_sizes:\[n\]/);
+  assert.match(patched, /max_tokens:n/);
+  assert.match(patched, /custom_model:t,context_window_size:t\?\.context_window_size,prompt_max_tokens:t\?\.prompt_max_tokens/);
+});
+
+await runTest("real context patch forwards context window as top-level request fields", async () => {
+  const { root, indexJsPath } = createFakeTraeWithRealContextFile("tcp-real-request-top-level-");
+  const configPath = path.join(root, "overrides.json");
+  setModelOverride(configPath, "gpt-5.5", 1000000);
+
+  applyRealContextPatch({ traeRoot: root, configPath });
+
+  const patched = fs.readFileSync(indexJsPath, "utf8");
+  assert.match(patched, /custom_model:g,context_window_size:g\.context_window_size,prompt_max_tokens:g\.prompt_max_tokens/);
+  assert.match(patched, /toolcall_history_max_tokens:g\.toolcall_history_max_tokens,context_window_sizes:g\.context_window_sizes,max_tokens:g\.max_tokens/);
+});
+
+await runTest("real context patch rewrites token usage stream max per model", async () => {
+  const { root, indexJsPath } = createFakeTraeWithRealContextFile("tcp-real-token-usage-");
+  const configPath = path.join(root, "overrides.json");
+  setModelOverride(configPath, "gpt-5.5", 1000000);
+
+  applyRealContextPatch({ traeRoot: root, configPath });
+
+  const patched = fs.readFileSync(indexJsPath, "utf8");
+  assert.match(patched, /const __tcpUsageMap=\{"gpt-5\.5":1000000,"openai\/\/gpt-5\.5":1000000\}/);
+  assert.match(patched, /e=\{\.\.\.e,max_tokens:__tcpUsageToken\}/);
+});
+
+await runTest("real context patch rewrites history token usage max per model", async () => {
+  const { root, indexJsPath } = createFakeTraeWithRealContextFile("tcp-real-history-usage-");
+  const configPath = path.join(root, "overrides.json");
+  setModelOverride(configPath, "gpt-5.5", 1000000);
+
+  applyRealContextPatch({ traeRoot: root, configPath });
+
+  const patched = fs.readFileSync(indexJsPath, "utf8");
+  assert.match(patched, /const __tcpHistoryUsageMap=\{"gpt-5\.5":1000000,"openai\/\/gpt-5\.5":1000000\}/);
+  assert.match(patched, /__tcpHistoryUsage&&__tcpHistoryToken\?\{\.\.\.__tcpHistoryUsage,max_tokens:__tcpHistoryToken\}:__tcpHistoryUsage/);
+});
+
+await runTest("real context patch caps usage UI to configured model max", async () => {
+  const { root, indexJsPath } = createFakeTraeWithRealContextFile("tcp-real-ui-usage-");
+  const configPath = path.join(root, "overrides.json");
+  setModelOverride(configPath, "gpt-5.4", 262144);
+  setModelOverride(configPath, "gpt-5.5", 1000000);
+
+  applyRealContextPatch({ traeRoot: root, configPath });
+
+  const patched = fs.readFileSync(indexJsPath, "utf8");
+  assert.match(patched, /const __tcpUiUsageMap=\{"gpt-5\.4":262144,"openai\/\/gpt-5\.4":262144,"gpt-5\.5":1000000,"openai\/\/gpt-5\.5":1000000\}/);
+  assert.match(patched, /__tcpUiToken\?\{\.\.\.i,max_tokens:__tcpUiToken\}:i\.max_tokens>__tcpUiMax\?\{\.\.\.i,max_tokens:__tcpUiMax\}:i/);
 });
 
 
@@ -214,14 +306,16 @@ await runTest("real context patch updates an existing patch to configured token 
   const configPath = path.join(root, "overrides.json");
   setModelOverride(configPath, "gpt-5.4", 262144);
   applyRealContextPatch({ traeRoot: root, configPath });
-  setModelOverride(configPath, "gpt-5.4", 1000000);
+  setModelOverride(configPath, "gpt-5.5", 1000000);
 
   applyRealContextPatch({ traeRoot: root, configPath });
 
   const patched = fs.readFileSync(indexJsPath, "utf8");
-  assert.match(patched, /u\.max_tokens=1000000/);
-  assert.match(patched, /i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,1000000\)\}/);
+  assert.match(patched, /"gpt-5\.4":262144/);
+  assert.match(patched, /"gpt-5\.5":1000000/);
+  assert.match(patched, /u\.max_tokens=__tcpToken/);
   assert.doesNotMatch(patched, /u\.max_tokens=262144/);
+  assert.doesNotMatch(patched, /i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,\d+\)\}/);
 });
 
 
@@ -245,10 +339,11 @@ await runTest("real context patch applies request-chain changes and reverts from
   const applied = applyRealContextPatch({ traeRoot: root, configPath });
   assert.equal(applied.realContextPatched, true);
   const patched = fs.readFileSync(indexJsPath, "utf8");
-  assert.match(patched, /custom_model:g,terminal_context/);
+  assert.match(patched, /custom_model:g,context_window_size:g\.context_window_size/);
   assert.match(patched, /prompt_max_tokens:o\?\.prompt_max_tokens/);
   assert.match(patched, /spongyicybulk-clip\.hf\.space/);
-  assert.match(patched, /i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,262144\)\}/);
+  assert.match(patched, /const __tcpMap=\{"gpt-5\.4":262144,"openai\/\/gpt-5\.4":262144\}/);
+  assert.doesNotMatch(patched, /i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,262144\)\}/);
 
   const status = getRealContextPatchStatus({ traeRoot: root, configPath });
   assert.equal(status.realContextPatched, true);
@@ -333,6 +428,59 @@ conn.close()
   const result = spawnSync("python", ["-c", check, dbPath], { encoding: "utf8" });
   assert.equal(result.status, 0);
   assert.deepEqual(result.stdout.trim().split(/\r?\n/), ["1000000", "1000000"]);
+});
+
+await runTest("state database patch keeps configured tokens per model", async () => {
+  const root = tempDir("tcp-state-per-model-");
+  const dbPath = path.join(root, "state.vscdb");
+  const seed = {
+    models: [
+      {
+        name: "openai//gpt-5.4",
+        display_name: "gpt-5.4",
+        prompt_max_tokens: 131072,
+      },
+      {
+        name: "openai//gpt-5.5",
+        display_name: "gpt-5.5",
+        prompt_max_tokens: 131072,
+      },
+    ],
+  };
+  const setup = `
+import sqlite3, sys, json
+conn = sqlite3.connect(sys.argv[1])
+cur = conn.cursor()
+cur.execute('create table ItemTable (key text primary key, value text)')
+cur.execute('insert into ItemTable values (?, ?)', ('model-list', ${JSON.stringify(JSON.stringify(seed))}))
+conn.commit()
+conn.close()
+`;
+  const { spawnSync } = await import("node:child_process");
+  assert.equal(spawnSync("python", ["-c", setup, dbPath], { encoding: "utf8" }).status, 0);
+  const configPath = path.join(root, "overrides.json");
+  setModelOverride(configPath, "gpt-5.4", 262144);
+  setModelOverride(configPath, "gpt-5.5", 1000000);
+
+  const status = applyStateDatabasePatch({ dbPath, configPath });
+
+  assert.equal(status.stateDbPatched, true);
+  assert.equal(status.stateDbTargetCount, 2);
+  const check = `
+import sqlite3, sys, json
+conn = sqlite3.connect(sys.argv[1])
+value = conn.execute('select value from ItemTable where key=?', ('model-list',)).fetchone()[0]
+data = json.loads(value)
+for item in data['models']:
+    print(item['name'], item['prompt_max_tokens'], item['max_tokens'])
+conn.close()
+`;
+  const result = spawnSync("python", ["-c", check, dbPath], { encoding: "utf8" });
+  assert.equal(result.status, 0);
+  assert.deepEqual(result.stdout.trim().split(/\r?\n/), [
+    "openai//gpt-5.4 262144 262144",
+    "openai//gpt-5.5 1000000 1000000",
+  ]);
 });
 
 await runTest("terminateTraeIfRequested only kills when requested", async () => {

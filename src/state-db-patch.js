@@ -6,18 +6,42 @@ import { getDefaultConfigPath, loadConfig } from "./config.js";
 import { fileExists } from "./utils.js";
 
 const FALLBACK_TARGET_TOKENS = 262144;
-const TARGET_MODEL = "gpt-5.4";
+const FALLBACK_TARGET_MODEL = "gpt-5.4";
 const TARGET_HOST = "spongyicybulk-clip.hf.space";
 const STATE_DB_BACKUP_SUFFIX = ".trae-context-state-backup";
 
-function getConfiguredTargetTokens(configPath = getDefaultConfigPath()) {
+function normalizeModelName(value) {
+  if (typeof value !== "string") return "";
+  return value.trim().toLowerCase();
+}
+
+function bareModelName(value) {
+  const normalized = normalizeModelName(value);
+  if (!normalized) return "";
+  const parts = normalized.split("//");
+  return parts[parts.length - 1];
+}
+
+function addContextWindowTarget(targets, modelId, tokens) {
+  const normalized = normalizeModelName(modelId);
+  if (!normalized || !Number.isInteger(tokens) || tokens <= 0) return;
+  targets[normalized] = tokens;
+  const bare = bareModelName(normalized);
+  if (!bare) return;
+  targets[bare] = tokens;
+  targets[`openai//${bare}`] = tokens;
+}
+
+function getConfiguredContextWindows(configPath = getDefaultConfigPath()) {
   const config = loadConfig(configPath);
-  const exact = config.models["gpt-5.4"]?.context_window_tokens;
-  if (Number.isInteger(exact) && exact > 0) return exact;
-  const first = Object.values(config.models || {})
-    .map((item) => item?.context_window_tokens)
-    .find((item) => Number.isInteger(item) && item > 0);
-  return first || FALLBACK_TARGET_TOKENS;
+  const targets = {};
+  for (const [modelId, override] of Object.entries(config.models || {})) {
+    addContextWindowTarget(targets, modelId, override?.context_window_tokens);
+  }
+  if (Object.keys(targets).length === 0) {
+    addContextWindowTarget(targets, FALLBACK_TARGET_MODEL, FALLBACK_TARGET_TOKENS);
+  }
+  return targets;
 }
 
 export function getStateDbPath() {
@@ -34,21 +58,45 @@ function buildPatchScript() {
 import json, os, sqlite3, sys
 
 db = sys.argv[1]
-token = int(sys.argv[2])
-model = sys.argv[3].lower()
-host = sys.argv[4].lower()
+targets = {str(k).lower(): int(v) for k, v in json.loads(sys.argv[2]).items()}
+host = sys.argv[3].lower()
+legacy_token = targets.get('${FALLBACK_TARGET_MODEL}') or targets.get('openai//${FALLBACK_TARGET_MODEL}')
 
-def is_target(obj):
+def norm(value):
+    return str(value or '').strip().lower()
+
+def bare(value):
+    value = norm(value)
+    return value.split('//')[-1] if value else ''
+
+def configured_token(value):
+    value = norm(value)
+    if value in targets:
+        return targets[value]
+    stripped = bare(value)
+    if stripped in targets:
+        return targets[stripped]
+    prefixed = 'openai//' + stripped if stripped else ''
+    if prefixed in targets:
+        return targets[prefixed]
+    return None
+
+def target_token(obj):
     if not isinstance(obj, dict):
-        return False
-    name = str(obj.get('name', '')).lower()
-    display = str(obj.get('display_name', '')).lower()
-    base = str(obj.get('base_url', '')).lower()
-    custom = str(obj.get('custom_model_id', ''))
-    return name == 'openai//' + model or name == model or display == model or host in base or custom == '330034820'
+        return None
+    for key in ('name', 'display_name', 'model', 'model_id', 'id', 'config_name', 'custom_model_id'):
+        token = configured_token(obj.get(key))
+        if token:
+            return token
+    base = norm(obj.get('base_url', ''))
+    custom = norm(obj.get('custom_model_id', ''))
+    if legacy_token and (host in base or custom == '330034820'):
+        return legacy_token
+    return None
 
 def patch_model(obj):
-    if not is_target(obj):
+    token = target_token(obj)
+    if not token:
         return False
     obj['prompt_max_tokens'] = token
     obj['context_window_size'] = {'default': token, 'max': [token]}
@@ -83,7 +131,7 @@ def walk(value):
 
 conn = sqlite3.connect(db, timeout=5)
 cur = conn.cursor()
-rows = cur.execute("select key,value from ItemTable where value like '%gpt-5.4%' or value like '%spongyicybulk%' or value like '%330034820%'").fetchall()
+rows = cur.execute("select key,value from ItemTable").fetchall()
 changed = 0
 for key, val in rows:
     try:
@@ -104,28 +152,52 @@ function buildStatusScript() {
 import json, sqlite3, sys
 
 db = sys.argv[1]
-token = int(sys.argv[2])
-model = sys.argv[3].lower()
-host = sys.argv[4].lower()
+targets = {str(k).lower(): int(v) for k, v in json.loads(sys.argv[2]).items()}
+host = sys.argv[3].lower()
+legacy_token = targets.get('${FALLBACK_TARGET_MODEL}') or targets.get('openai//${FALLBACK_TARGET_MODEL}')
 result = {'exists': True, 'target_count': 0, 'patched_count': 0}
 
-def is_target(obj):
-    if not isinstance(obj, dict):
-        return False
-    name = str(obj.get('name', '')).lower()
-    display = str(obj.get('display_name', '')).lower()
-    base = str(obj.get('base_url', '')).lower()
-    custom = str(obj.get('custom_model_id', ''))
-    return name == 'openai//' + model or name == model or display == model or host in base or custom == '330034820'
+def norm(value):
+    return str(value or '').strip().lower()
 
-def is_patched(obj):
+def bare(value):
+    value = norm(value)
+    return value.split('//')[-1] if value else ''
+
+def configured_token(value):
+    value = norm(value)
+    if value in targets:
+        return targets[value]
+    stripped = bare(value)
+    if stripped in targets:
+        return targets[stripped]
+    prefixed = 'openai//' + stripped if stripped else ''
+    if prefixed in targets:
+        return targets[prefixed]
+    return None
+
+def target_token(obj):
+    if not isinstance(obj, dict):
+        return None
+    for key in ('name', 'display_name', 'model', 'model_id', 'id', 'config_name', 'custom_model_id'):
+        token = configured_token(obj.get(key))
+        if token:
+            return token
+    base = norm(obj.get('base_url', ''))
+    custom = norm(obj.get('custom_model_id', ''))
+    if legacy_token and (host in base or custom == '330034820'):
+        return legacy_token
+    return None
+
+def is_patched(obj, token):
     return obj.get('prompt_max_tokens') == token and obj.get('selected_max_context_window_size') == token and obj.get('context_window_sizes') == [token] and obj.get('toolcall_history_max_tokens') == token and obj.get('max_tokens') == token
 
 def walk(value):
     if isinstance(value, dict):
-        if is_target(value):
+        token = target_token(value)
+        if token:
             result['target_count'] += 1
-            if is_patched(value):
+            if is_patched(value, token):
                 result['patched_count'] += 1
         for child in value.values():
             walk(child)
@@ -135,7 +207,7 @@ def walk(value):
 
 conn = sqlite3.connect('file:' + db + '?mode=ro', uri=True, timeout=5)
 cur = conn.cursor()
-rows = cur.execute("select value from ItemTable where value like '%gpt-5.4%' or value like '%spongyicybulk%' or value like '%330034820%'").fetchall()
+rows = cur.execute("select value from ItemTable").fetchall()
 for (val,) in rows:
     try:
         walk(json.loads(val))
@@ -169,7 +241,7 @@ export function getStateDatabasePatchStatus({ dbPath = getStateDbPath(), configP
     return { stateDbPath: dbPath, stateDbExists: false, stateDbPatched: false, stateDbBackupExists: fileExists(backupPath), stateDbTargetCount: 0, stateDbPatchedCount: 0 };
   }
   try {
-    const raw = runPython(buildStatusScript(), [dbPath, String(getConfiguredTargetTokens(configPath)), TARGET_MODEL, TARGET_HOST]);
+    const raw = runPython(buildStatusScript(), [dbPath, JSON.stringify(getConfiguredContextWindows(configPath)), TARGET_HOST]);
     const parsed = JSON.parse(raw || "{}");
     return {
       stateDbPath: dbPath,
@@ -190,7 +262,7 @@ export function applyStateDatabasePatch({ dbPath = getStateDbPath(), configPath 
   if (!fileExists(backupPath)) {
     fs.copyFileSync(dbPath, backupPath);
   }
-  runPython(buildPatchScript(), [dbPath, String(getConfiguredTargetTokens(configPath)), TARGET_MODEL, TARGET_HOST]);
+  runPython(buildPatchScript(), [dbPath, JSON.stringify(getConfiguredContextWindows(configPath)), TARGET_HOST]);
   return getStateDatabasePatchStatus({ dbPath, configPath });
 }
 
