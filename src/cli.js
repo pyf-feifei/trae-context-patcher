@@ -9,6 +9,9 @@ import {
   setModelOverride,
 } from "./config.js";
 import { applyPatch, getPatchStatus, revertPatch } from "./patcher.js";
+import { applyRealContextPatch, getRealContextPatchStatus, revertRealContextPatch } from "./real-context-patch.js";
+import { applyStateDatabasePatch, getStateDatabasePatchStatus, revertStateDatabasePatch } from "./state-db-patch.js";
+import { applyWorkbenchPatch, getWorkbenchPatchStatus, revertWorkbenchPatch } from "./workbench-patch.js";
 
 function writeLine(writer, message = "") {
   writer(`${message}\n`);
@@ -71,11 +74,31 @@ function printStatus(status, writer) {
   writeLine(writer, `Patch owner: ${status.patchOwner}`);
   writeLine(writer, `Helper exists: ${status.helperExists ? "yes" : "no"}`);
   writeLine(writer, `Backup exists: ${status.backupExists ? "yes" : "no"}`);
+  if (status.realContextPatched !== undefined) {
+    writeLine(writer, `Real context patched: ${status.realContextPatched ? "yes" : "no"}`);
+  }
+  if (status.stateDbPatched !== undefined) {
+    writeLine(writer, `State DB patched: ${status.stateDbPatched ? "yes" : "no"} (${status.stateDbPatchedCount}/${status.stateDbTargetCount})`);
+  }
+  if (status.workbenchPatched !== undefined) {
+    writeLine(writer, `Workbench patched: ${status.workbenchPatched ? "yes" : "no"}`);
+  }
   writeLine(writer, `Configured models: ${status.modelCount}`);
   if (status.modelCount > 0) {
     writeLine(writer, "Mappings:");
     printMappings(status.models, writer);
   }
+}
+
+function getFullStatus(options) {
+  const baseStatus = getPatchStatus(options);
+  let realStatus = {};
+  let dbStatus = {};
+  let workbenchStatus = {};
+  try { realStatus = getRealContextPatchStatus(options); } catch {}
+  try { dbStatus = getStateDatabasePatchStatus(options); } catch {}
+  try { workbenchStatus = getWorkbenchPatchStatus(options); } catch {}
+  return { ...baseStatus, ...realStatus, ...dbStatus, ...workbenchStatus };
 }
 
 export async function runCli(argv, io = {}) {
@@ -89,7 +112,7 @@ export async function runCli(argv, io = {}) {
       printUsage(stdout);
       return 0;
     case "status": {
-      printStatus(getPatchStatus(options), stdout);
+      printStatus(getFullStatus(options), stdout);
       return 0;
     }
     case "list": {
@@ -112,9 +135,36 @@ export async function runCli(argv, io = {}) {
     case "apply": {
       const status = applyPatch(options);
       writeLine(stdout, `Patched Trae at ${status.mainJsPath}`);
+      try {
+        const realStatus = applyRealContextPatch(options);
+        writeLine(stdout, `Real context patched at ${realStatus.realContextIndexPath}`);
+      } catch (error) {
+        writeLine(stderr, `Real context patch skipped: ${error.message || error}`);
+      }
+      try {
+        const dbStatus = applyStateDatabasePatch(options);
+        writeLine(stdout, `State DB patched: ${dbStatus.stateDbPatchedCount}/${dbStatus.stateDbTargetCount} entries`);
+      } catch (error) {
+        writeLine(stderr, `State DB patch skipped: ${error.message || error}`);
+      }
+      try {
+        const workbenchStatus = applyWorkbenchPatch(options);
+        writeLine(stdout, `Workbench patched at ${workbenchStatus.workbenchPath}`);
+      } catch (error) {
+        writeLine(stderr, `Workbench patch skipped: ${error.message || error}`);
+      }
       return 0;
     }
     case "revert": {
+      try { revertWorkbenchPatch(options); } catch (error) {
+        writeLine(stderr, `Workbench revert skipped: ${error.message || error}`);
+      }
+      try { revertRealContextPatch(options); } catch (error) {
+        writeLine(stderr, `Real context revert skipped: ${error.message || error}`);
+      }
+      try { revertStateDatabasePatch(options); } catch (error) {
+        writeLine(stderr, `State DB revert skipped: ${error.message || error}`);
+      }
       const status = revertPatch(options);
       writeLine(stdout, `Reverted Trae patch at ${status.mainJsPath}`);
       return 0;

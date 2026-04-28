@@ -9,7 +9,10 @@ const TARGET_HOST = "spongyicybulk-clip.hf.space";
 const FALLBACK_TARGET_TOKENS = 262144;
 const FALLBACK_TARGET_MODEL = "gpt-5.4";
 const REQUEST_MODEL_FIELDS_LEGACY_PATCHED = 'context_window_size:o?.selected_max_context_window_size??("number"==typeof o?.context_window_size?o.context_window_size:o?.context_window_size?.default),prompt_max_tokens:o?.prompt_max_tokens,toolcall_history_max_tokens:o?.toolcall_history_max_tokens,context_window_sizes:o?.context_window_sizes??(o?.selected_max_context_window_size?[o.selected_max_context_window_size]:void 0),max_tokens:o?.max_tokens,region:o?.region,sk:o?.sk||"",auth_type:o?.auth_type||0}';
-const REQUEST_MODEL_FIELDS = 'context_window_size:o?.selected_max_context_window_size??("number"==typeof o?.context_window_size?o.context_window_size:o?.context_window_size?.default),prompt_max_tokens:o?.prompt_max_tokens,toolcall_history_max_tokens:o?.toolcall_history_max_tokens,context_window_sizes:o?.context_window_sizes??(o?.selected_max_context_window_size?[o.selected_max_context_window_size]:void 0),max_tokens:o?.max_tokens,extra_config:o?.extra_config??o?.custom_config,region:o?.region,sk:o?.sk||"",auth_type:o?.auth_type||0}';
+const REQUEST_MODEL_FIELDS_RAW_EXTRA_CONFIG = 'context_window_size:o?.selected_max_context_window_size??("number"==typeof o?.context_window_size?o.context_window_size:o?.context_window_size?.default),prompt_max_tokens:o?.prompt_max_tokens,toolcall_history_max_tokens:o?.toolcall_history_max_tokens,context_window_sizes:o?.context_window_sizes??(o?.selected_max_context_window_size?[o.selected_max_context_window_size]:void 0),max_tokens:o?.max_tokens,extra_config:o?.extra_config??o?.custom_config,region:o?.region,sk:o?.sk||"",auth_type:o?.auth_type||0}';
+const EXTRA_CONFIG_EXPR = '(()=>{let e=o?.extra_config??o?.custom_config;try{e="string"==typeof e&&e.trim()?JSON.parse(e):e}catch{e=void 0}return e&&"object"==typeof e&&!Array.isArray(e)?e:void 0})()';
+const NATIVE_EXTRA_CONFIG_EXPR = '(()=>{let e=r.extra_config??r.custom_config;try{e="string"==typeof e&&e.trim()?JSON.parse(e):e}catch{e=void 0}return e&&"object"==typeof e&&!Array.isArray(e)?e:void 0})()';
+const REQUEST_MODEL_FIELDS = `context_window_size:o?.selected_max_context_window_size??("number"==typeof o?.context_window_size?o.context_window_size:o?.context_window_size?.default),prompt_max_tokens:o?.prompt_max_tokens,toolcall_history_max_tokens:o?.toolcall_history_max_tokens,context_window_sizes:o?.context_window_sizes??(o?.selected_max_context_window_size?[o.selected_max_context_window_size]:void 0),max_tokens:o?.max_tokens,extra_config:${EXTRA_CONFIG_EXPR},region:o?.region,sk:o?.sk||"",auth_type:o?.auth_type||0}`;
 const SESSION_TOKEN_RETURN = ';let d=this.configurationService.getConfiguration("ai_assistant.request.aws_session_token")||void 0;return d&&(u.session_token=d),u}';
 const CONTEXT_VARIABLES_OLD = 'let t;let i=this.getCurrentModelName(),r=this._sessionRelationStore.getCurrentModel(),n=r?.prompt_max_tokens,o=this._i18nService.getLanguageConfig(),a=this.getAutoRunConfig(e),{projectId:s}=this._projectStore.getState();return r&&(t={provider:r.provider,multimodal:!0===r.multimodal,config_name:r.name,display_model_name:r.display_name,ak:r.ak,base_url:r.base_url,use_remote_service:!r.client_connect,config_source:r.config_source,prompt_max_tokens:n,region:r.region,sk:r.sk,auth_type:r.auth_type}),{project_id:s,model_name:i,icube_language:o.platform.toLocaleLowerCase(),icube_ai_language:this.getCurrentAILanguage(),chat_session_id:e??this.currentSession?.sessionId,custom_model:t,workspace_folder:this._workspaceFacade.getWorkspacePathBySessionId(e??this.currentSession?.sessionId),confirm_config:a}}';
 const TOKEN_USAGE_PARSER_OLD = 'parse(e,t){return t.firstTokenUsageReported||(t.firstTokenUsageReported=!0,this._chatStreamFirstTokenReporter.reportTokenUsage(e,t)),e}handleSteamingResult';
@@ -19,6 +22,8 @@ const USAGE_UI_SELECTOR_NEW = '{tokenUsage:i,agentMessageId:r,agentProcessSuppor
 const USAGE_UI_NULL_CHECK = 'if(!l||!(i?.last_turn_total_tokens&&i?.max_tokens))return null;let f=i?.last_turn_total_tokens/i?.max_tokens';
 const REQUEST_OBJECT_TOP_LEVEL_CONTEXT = 'custom_model:g,context_window_size:g.context_window_size,prompt_max_tokens:g.prompt_max_tokens,toolcall_history_max_tokens:g.toolcall_history_max_tokens,context_window_sizes:g.context_window_sizes,max_tokens:g.max_tokens,terminal_context';
 const NATIVE_CONTEXT_TOP_LEVEL_CONTEXT = 'custom_model:t,context_window_size:t?.context_window_size,prompt_max_tokens:t?.prompt_max_tokens,toolcall_history_max_tokens:t?.toolcall_history_max_tokens,context_window_sizes:t?.context_window_sizes,max_tokens:t?.max_tokens,workspace_folder:';
+const MODEL_LIST_FORCE_REFRESH_OLD = "data:{functions:e,force_refresh:t}";
+const MODEL_LIST_FORCE_REFRESH_SAFE = "data:{functions:e,force_refresh:!1}";
 const NATIVE_CONTEXT_PATCHED_REGEX = /let t;let i=this\.getCurrentModelName\(\),r=this\._sessionRelationStore\.getCurrentModel\(\),n=r\?\.prompt_max_tokens;\(\(\)=>\{const __tcpContextMap=\{[^}]*\}[\s\S]*?\}\)\(\);[\s\S]*?let o=this\._i18nService\.getLanguageConfig\(\),a=this\.getAutoRunConfig\(e\),\{projectId:s\}=this\._projectStore\.getState\(\);return r&&\(t=\{provider:r\.provider[\s\S]*?auth_type:r\.auth_type\}\),\{project_id:s,model_name:i,icube_language:o\.platform\.toLocaleLowerCase\(\),icube_ai_language:this\.getCurrentAILanguage\(\),chat_session_id:e\?\?this\.currentSession\?\.sessionId,custom_model:t[\s\S]*?workspace_folder:this\._workspaceFacade\.getWorkspacePathBySessionId\(e\?\?this\.currentSession\?\.sessionId\),confirm_config:a\}\}/;
 
 function normalizeModelName(value) {
@@ -112,12 +117,12 @@ function getAvailableBackupPath(indexJsPath) {
 
 function buildRequestContextPatch(contextWindows) {
   const mapLiteral = JSON.stringify(contextWindows);
-  return `;(()=>{const __tcpMap=${mapLiteral},__tcpToolProtocol={apply_file_path:!0,enable_invalid_json_hint:!0,is_new_pe:!0,native_function_call:!0,native_keep_finish_tool:!1,parallel_tool_calling:!1,use_v2_process:!0},__tcpToolConfig=__tcpValue=>{let __tcpExisting={};try{__tcpExisting=__tcpValue&&"string"==typeof __tcpValue?JSON.parse(__tcpValue):__tcpValue&&"object"==typeof __tcpValue&&!Array.isArray(__tcpValue)?__tcpValue:{}}catch{}const __tcpMerged={...__tcpToolProtocol,...__tcpExisting,native_function_call:!0,native_keep_finish_tool:!1,parallel_tool_calling:!1};return __tcpMerged},__tcpNorm=__tcpValue=>"string"==typeof __tcpValue?__tcpValue.trim().toLowerCase():"",__tcpBare=__tcpValue=>__tcpNorm(__tcpValue).split("//").pop(),__tcpToken=__tcpMap[__tcpNorm(u.config_name)]??__tcpMap[__tcpNorm(u.display_model_name)]??__tcpMap[__tcpNorm(o?.name)]??__tcpMap[__tcpNorm(o?.display_name)]??__tcpMap[__tcpBare(u.config_name)]??__tcpMap[__tcpBare(u.display_model_name)]??__tcpMap[__tcpBare(o?.name)]??__tcpMap[__tcpBare(o?.display_name)]??(u.base_url?.includes("${TARGET_HOST}")?__tcpMap["${FALLBACK_TARGET_MODEL}"]:void 0);__tcpToken&&(u.context_window_size=__tcpToken,u.prompt_max_tokens=__tcpToken,u.toolcall_history_max_tokens=__tcpToken,u.context_window_sizes=[__tcpToken],u.max_tokens=__tcpToken,u.extra_config=__tcpToolConfig(u.extra_config??o?.custom_config))})()`;
+  return `;(()=>{const __tcpMap=${mapLiteral},__tcpNorm=__tcpValue=>"string"==typeof __tcpValue?__tcpValue.trim().toLowerCase():"",__tcpBare=__tcpValue=>__tcpNorm(__tcpValue).split("//").pop(),__tcpToken=__tcpMap[__tcpNorm(u.config_name)]??__tcpMap[__tcpNorm(u.display_model_name)]??__tcpMap[__tcpNorm(o?.name)]??__tcpMap[__tcpNorm(o?.display_name)]??__tcpMap[__tcpBare(u.config_name)]??__tcpMap[__tcpBare(u.display_model_name)]??__tcpMap[__tcpBare(o?.name)]??__tcpMap[__tcpBare(o?.display_name)]??(u.base_url?.includes("${TARGET_HOST}")?__tcpMap["${FALLBACK_TARGET_MODEL}"]:void 0);__tcpToken&&(u.context_window_size=__tcpToken,u.prompt_max_tokens=__tcpToken,u.toolcall_history_max_tokens=__tcpToken,u.context_window_sizes=[__tcpToken],u.max_tokens=__tcpToken)})()`;
 }
 
 function buildNativeContextVariablesSnippet(contextWindows) {
   const mapLiteral = JSON.stringify(contextWindows);
-  return `let t;let i=this.getCurrentModelName(),r=this._sessionRelationStore.getCurrentModel(),n=r?.prompt_max_tokens;(()=>{const __tcpContextMap=${mapLiteral},__tcpContextNorm=__tcpValue=>"string"==typeof __tcpValue?__tcpValue.trim().toLowerCase():"",__tcpContextBare=__tcpValue=>__tcpContextNorm(__tcpValue).split("//").pop(),__tcpContextToken=__tcpContextMap[__tcpContextNorm(i)]??__tcpContextMap[__tcpContextNorm(r?.name)]??__tcpContextMap[__tcpContextNorm(r?.display_name)]??__tcpContextMap[__tcpContextNorm(r?.config_name)]??__tcpContextMap[__tcpContextBare(i)]??__tcpContextMap[__tcpContextBare(r?.name)]??__tcpContextMap[__tcpContextBare(r?.display_name)]??__tcpContextMap[__tcpContextBare(r?.config_name)]??(r?.base_url?.includes("${TARGET_HOST}")?__tcpContextMap["${FALLBACK_TARGET_MODEL}"]:void 0);__tcpContextToken&&(n=__tcpContextToken)})();const __tcpContextToolProtocol={apply_file_path:!0,enable_invalid_json_hint:!0,is_new_pe:!0,native_function_call:!0,native_keep_finish_tool:!1,parallel_tool_calling:!1,use_v2_process:!0},__tcpContextToolConfig=__tcpValue=>{let __tcpExisting={};try{__tcpExisting=__tcpValue&&"string"==typeof __tcpValue?JSON.parse(__tcpValue):__tcpValue&&"object"==typeof __tcpValue&&!Array.isArray(__tcpValue)?__tcpValue:{}}catch{}return {...__tcpContextToolProtocol,...__tcpExisting,native_function_call:!0,native_keep_finish_tool:!1,parallel_tool_calling:!1}};let o=this._i18nService.getLanguageConfig(),a=this.getAutoRunConfig(e),{projectId:s}=this._projectStore.getState();return r&&(t={provider:r.provider,multimodal:!0===r.multimodal,config_name:r.name,display_model_name:r.display_name,ak:r.ak,base_url:r.base_url,use_remote_service:!r.client_connect,config_source:r.config_source,prompt_max_tokens:n,context_window_size:n,selected_max_context_window_size:n,context_window_sizes:[n],toolcall_history_max_tokens:n,max_tokens:n,extra_config:__tcpContextToolConfig(r.extra_config??r.custom_config),region:r.region,sk:r.sk,auth_type:r.auth_type}),{project_id:s,model_name:i,icube_language:o.platform.toLocaleLowerCase(),icube_ai_language:this.getCurrentAILanguage(),chat_session_id:e??this.currentSession?.sessionId,custom_model:t,context_window_size:t?.context_window_size,prompt_max_tokens:t?.prompt_max_tokens,toolcall_history_max_tokens:t?.toolcall_history_max_tokens,context_window_sizes:t?.context_window_sizes,max_tokens:t?.max_tokens,workspace_folder:this._workspaceFacade.getWorkspacePathBySessionId(e??this.currentSession?.sessionId),confirm_config:a}}`;
+  return `let t;let i=this.getCurrentModelName(),r=this._sessionRelationStore.getCurrentModel(),n=r?.prompt_max_tokens;(()=>{const __tcpContextMap=${mapLiteral},__tcpContextNorm=__tcpValue=>"string"==typeof __tcpValue?__tcpValue.trim().toLowerCase():"",__tcpContextBare=__tcpValue=>__tcpContextNorm(__tcpValue).split("//").pop(),__tcpContextToken=__tcpContextMap[__tcpContextNorm(i)]??__tcpContextMap[__tcpContextNorm(r?.name)]??__tcpContextMap[__tcpContextNorm(r?.display_name)]??__tcpContextMap[__tcpContextNorm(r?.config_name)]??__tcpContextMap[__tcpContextBare(i)]??__tcpContextMap[__tcpContextBare(r?.name)]??__tcpContextMap[__tcpContextBare(r?.display_name)]??__tcpContextMap[__tcpContextBare(r?.config_name)]??(r?.base_url?.includes("${TARGET_HOST}")?__tcpContextMap["${FALLBACK_TARGET_MODEL}"]:void 0);__tcpContextToken&&(n=__tcpContextToken)})();let o=this._i18nService.getLanguageConfig(),a=this.getAutoRunConfig(e),{projectId:s}=this._projectStore.getState();return r&&(t={provider:r.provider,multimodal:!0===r.multimodal,config_name:r.name,display_model_name:r.display_name,ak:r.ak,base_url:r.base_url,use_remote_service:!r.client_connect,config_source:r.config_source,prompt_max_tokens:n,context_window_size:n,selected_max_context_window_size:n,context_window_sizes:[n],toolcall_history_max_tokens:n,max_tokens:n,extra_config:${NATIVE_EXTRA_CONFIG_EXPR},region:r.region,sk:r.sk,auth_type:r.auth_type}),{project_id:s,model_name:i,icube_language:o.platform.toLocaleLowerCase(),icube_ai_language:this.getCurrentAILanguage(),chat_session_id:e??this.currentSession?.sessionId,custom_model:t,context_window_size:t?.context_window_size,prompt_max_tokens:t?.prompt_max_tokens,toolcall_history_max_tokens:t?.toolcall_history_max_tokens,context_window_sizes:t?.context_window_sizes,max_tokens:t?.max_tokens,workspace_folder:this._workspaceFacade.getWorkspacePathBySessionId(e??this.currentSession?.sessionId),confirm_config:a}}`;
 }
 
 function patchNativeContextTopLevelFields(source) {
@@ -209,6 +214,9 @@ function patchRequestModelInfo(source, contextWindows) {
   if (patchedFieldsStart === -1) {
     patchedFieldsStart = source.indexOf(REQUEST_MODEL_FIELDS_LEGACY_PATCHED);
   }
+  if (patchedFieldsStart === -1) {
+    patchedFieldsStart = source.indexOf(REQUEST_MODEL_FIELDS_RAW_EXTRA_CONFIG);
+  }
   if (patchedFieldsStart !== -1) {
     const patchedFieldsEnd = source.indexOf(SESSION_TOKEN_RETURN, patchedFieldsStart);
     if (patchedFieldsEnd === -1) {
@@ -267,16 +275,23 @@ function patchTooltipTotalFormat(source) {
   return source.replace(oldSnippet, newSnippet);
 }
 
+function patchModelListForceRefresh(source) {
+  if (!source.includes(MODEL_LIST_FORCE_REFRESH_OLD)) return source;
+  return source.replaceAll(MODEL_LIST_FORCE_REFRESH_OLD, MODEL_LIST_FORCE_REFRESH_SAFE);
+}
 
 function patchSource(source, contextWindows) {
-  return patchTooltipTotalFormat(
-    patchTokenUsageTooltip(
-      patchUsageUiMaxTokens(
-        patchTokenUsageStreamParser(
-          patchHistoryTokenUsage(
-            patchNativeContextVariables(
-              patchRequestObjectTopLevelContext(
-                patchCustomModelOmit(patchRequestModelInfo(source, contextWindows)),
+  return patchModelListForceRefresh(
+    patchTooltipTotalFormat(
+      patchTokenUsageTooltip(
+        patchUsageUiMaxTokens(
+          patchTokenUsageStreamParser(
+            patchHistoryTokenUsage(
+              patchNativeContextVariables(
+                patchRequestObjectTopLevelContext(
+                  patchCustomModelOmit(patchRequestModelInfo(source, contextWindows)),
+                ),
+                contextWindows,
               ),
               contextWindows,
             ),
@@ -286,7 +301,6 @@ function patchSource(source, contextWindows) {
         ),
         contextWindows,
       ),
-      contextWindows,
     ),
   );
 }
@@ -299,25 +313,31 @@ export function getRealContextPatchStatus({ traeRoot, configPath = getDefaultCon
   const contextWindows = getConfiguredContextWindows(configPath);
   const mapLiteral = JSON.stringify(contextWindows);
   const hasForcedTooltipMax = /i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,\d+\)\}/.test(source);
+  const modelRefreshPromptSafe =
+    !source.includes(MODEL_LIST_FORCE_REFRESH_OLD) ||
+    source.includes(MODEL_LIST_FORCE_REFRESH_SAFE);
   const realContextPatched =
     source.includes(REQUEST_OBJECT_TOP_LEVEL_CONTEXT) &&
     source.includes("prompt_max_tokens:o?.prompt_max_tokens") &&
-    source.includes("extra_config:o?.extra_config??o?.custom_config") &&
-    source.includes("u.extra_config=__tcpToolConfig") &&
+    source.includes(`extra_config:${EXTRA_CONFIG_EXPR}`) &&
     source.includes(`const __tcpMap=${mapLiteral}`) &&
     source.includes("u.max_tokens=__tcpToken") &&
     source.includes(`const __tcpContextMap=${mapLiteral}`) &&
-    source.includes("extra_config:__tcpContextToolConfig") &&
+    source.includes(`extra_config:${NATIVE_EXTRA_CONFIG_EXPR}`) &&
     source.includes(`const __tcpUsageMap=${mapLiteral}`) &&
     source.includes(`const __tcpHistoryUsageMap=${mapLiteral}`) &&
     source.includes(`const __tcpUiUsageMap=${mapLiteral}`) &&
     source.includes(NATIVE_CONTEXT_TOP_LEVEL_CONTEXT) &&
+    !source.includes("__tcpToolProtocol") &&
+    !source.includes("__tcpContextToolProtocol") &&
+    modelRefreshPromptSafe &&
     !hasForcedTooltipMax;
   return {
     realContextIndexPath: indexJsPath,
     realContextBackupPath: backupPath,
     realContextFileExists: exists,
     realContextPatched,
+    modelRefreshPromptSafe,
     realContextBackupExists: fileExists(backupPath) || getLegacyBackupPaths(indexJsPath).length > 0,
   };
 }

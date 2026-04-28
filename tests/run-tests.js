@@ -206,7 +206,7 @@ return applyOverridesToObject;`)();
   assert.equal(payload.toolcall_history_max_tokens, 1000000);
 });
 
-await runTest("helper adds SOLO tool protocol defaults to configured custom models", async () => {
+await runTest("helper preserves existing tool protocol while patching context windows", async () => {
   const helperSource = buildHelperSource({ configPath: "C:/tmp/model-overrides.json" });
   const testableHelperSource = helperSource
     .replace(/^import .*$/gm, "")
@@ -215,7 +215,7 @@ await runTest("helper adds SOLO tool protocol defaults to configured custom mode
 return applyOverridesToObject;`)();
   const payload = {
     model: "openai//gpt-5.5",
-    custom_config: "",
+    custom_config: JSON.stringify({ native_function_call: false, provider_flag: "keep" }),
   };
 
   applyOverridesToObject(payload, {
@@ -224,15 +224,66 @@ return applyOverridesToObject;`)();
     },
   });
 
-  const config = JSON.parse(payload.custom_config);
-  assert.equal(config.apply_file_path, true);
-  assert.equal(config.enable_invalid_json_hint, true);
-  assert.equal(config.is_new_pe, true);
-  assert.equal(config.native_function_call, true);
-  assert.equal(config.native_keep_finish_tool, false);
-  assert.equal(config.parallel_tool_calling, false);
-  assert.equal(config.use_v2_process, true);
-  assert.deepEqual(payload.extra_config, config);
+  assert.equal(JSON.parse(payload.custom_config).native_function_call, false);
+  assert.equal(JSON.parse(payload.custom_config).provider_flag, "keep");
+  assert.equal(payload.extra_config, undefined);
+  assert.equal(payload.prompt_max_tokens, 1000000);
+});
+
+await runTest("helper removes legacy forced tool protocol-only config", async () => {
+  const helperSource = buildHelperSource({ configPath: "C:/tmp/model-overrides.json" });
+  const testableHelperSource = helperSource
+    .replace(/^import .*$/gm, "")
+    .replace(/app\.on\([\s\S]*$/, "");
+  const applyOverridesToObject = new Function(`${testableHelperSource}
+return applyOverridesToObject;`)();
+  const payload = {
+    model: "openai//gpt-5.5",
+    custom_config: JSON.stringify({
+      apply_file_path: true,
+      enable_invalid_json_hint: true,
+      is_new_pe: true,
+      native_function_call: true,
+      native_keep_finish_tool: false,
+      parallel_tool_calling: false,
+      use_v2_process: true,
+    }),
+    extra_config: {
+      apply_file_path: true,
+      enable_invalid_json_hint: true,
+      is_new_pe: true,
+      native_function_call: true,
+      native_keep_finish_tool: false,
+      parallel_tool_calling: false,
+      use_v2_process: true,
+    },
+  };
+
+  applyOverridesToObject(payload, {
+    models: {
+      "gpt-5.5": { context_window_tokens: 1000000 },
+    },
+  });
+
+  assert.equal(payload.custom_config, "");
+  assert.equal(Object.prototype.hasOwnProperty.call(payload, "extra_config"), false);
+  assert.equal(payload.prompt_max_tokens, 1000000);
+});
+
+await runTest("patch sources no longer contain force-apply tool protocol helpers", async () => {
+  const helperSource = buildHelperSource({ configPath: "C:/tmp/model-overrides.json" });
+  const statePatchSource = fs.readFileSync(new URL("../src/state-db-patch.js", import.meta.url), "utf8");
+
+  assert.doesNotMatch(helperSource, /function applySoloToolProtocol/);
+  assert.doesNotMatch(helperSource, /def apply_tool_protocol/);
+  assert.doesNotMatch(statePatchSource, /def apply_tool_protocol/);
+});
+
+await runTest("helper starts only one state database patch loop", async () => {
+  const helperSource = buildHelperSource({ configPath: "C:/tmp/model-overrides.json" });
+
+  assert.match(helperSource, /__TRAE_CONTEXT_PATCHER_STATE_DB_INTERVAL__/);
+  assert.match(helperSource, /if \(globalThis\.__TRAE_CONTEXT_PATCHER_STATE_DB_INTERVAL__\)/);
 });
 
 await runTest("real context patch uses per-model configured token values", async () => {
@@ -278,7 +329,7 @@ await runTest("real context patch forwards context window as top-level request f
   assert.match(patched, /toolcall_history_max_tokens:g\.toolcall_history_max_tokens,context_window_sizes:g\.context_window_sizes,max_tokens:g\.max_tokens/);
 });
 
-await runTest("real context patch forwards custom model tool protocol extra_config", async () => {
+await runTest("real context patch forwards existing custom model extra_config without forcing tool protocol", async () => {
   const { root, indexJsPath } = createFakeTraeWithRealContextFile("tcp-real-extra-config-");
   const configPath = path.join(root, "overrides.json");
   setModelOverride(configPath, "gpt-5.5", 1000000);
@@ -286,11 +337,27 @@ await runTest("real context patch forwards custom model tool protocol extra_conf
   applyRealContextPatch({ traeRoot: root, configPath });
 
   const patched = fs.readFileSync(indexJsPath, "utf8");
-  assert.match(patched, /extra_config:o\?\.extra_config\?\?o\?\.custom_config/);
-  assert.match(patched, /extra_config:__tcpContextToolConfig\(r\.extra_config\?\?r\.custom_config\)/);
+  assert.match(patched, /extra_config:\(\(\)=>\{let e=o\?\.extra_config\?\?o\?\.custom_config;try\{e="string"==typeof e&&e\.trim\(\)\?JSON\.parse\(e\):e\}/);
+  assert.match(patched, /extra_config:\(\(\)=>\{let e=r\.extra_config\?\?r\.custom_config;try\{e="string"==typeof e&&e\.trim\(\)\?JSON\.parse\(e\):e\}/);
+  assert.doesNotMatch(patched, /native_function_call:!0/);
+  assert.doesNotMatch(patched, /parallel_tool_calling:!1/);
 });
 
-await runTest("real context patch sends extra_config as object instead of JSON string", async () => {
+await runTest("real context patch disables forced prompt refresh for model list by function", async () => {
+  const { root, indexJsPath, source } = createFakeTraeWithRealContextFile("tcp-real-model-refresh-");
+  const configPath = path.join(root, "overrides.json");
+  setModelOverride(configPath, "gpt-5.5", 1000000);
+  const modelListSnippet = 'class Wd{async getModelListByFunction(e,t){try{let i=await this._clientManagerService.getClient(),r=await i.request(this._clientManagerService.wrapRequestWithCredential({service:Wd.SERVER_NAME,method:Wd.METHODS.ModelListByFunction,data:{functions:e,force_refresh:t}})),n=[],o=r.code===Oe.GetLatestModelListFailed;return r.data?.list?.length?n=[...r.data.list]:this._logService.error("Agent ModelAPIService-getModelListByFunction request with empty data"),{list:n,failed:o}}catch(e){return this._logService.error("Agent ModelAPIService-getModelListByFunction request Error:",e),{list:[],failed:!0}}}}';
+  fs.writeFileSync(indexJsPath, `${source}${modelListSnippet}`, "utf8");
+
+  applyRealContextPatch({ traeRoot: root, configPath });
+
+  const patched = fs.readFileSync(indexJsPath, "utf8");
+  assert.match(patched, /data:\{functions:e,force_refresh:!1\}/);
+  assert.doesNotMatch(patched, /data:\{functions:e,force_refresh:t\}/);
+});
+
+await runTest("real context patch leaves tool protocol config unmodified", async () => {
   const { root, indexJsPath } = createFakeTraeWithRealContextFile("tcp-real-extra-config-object-");
   const configPath = path.join(root, "overrides.json");
   setModelOverride(configPath, "gpt-5.5", 1000000);
@@ -298,8 +365,11 @@ await runTest("real context patch sends extra_config as object instead of JSON s
   applyRealContextPatch({ traeRoot: root, configPath });
 
   const patched = fs.readFileSync(indexJsPath, "utf8");
-  assert.match(patched, /return __tcpMerged/);
-  assert.doesNotMatch(patched, /return JSON\.stringify\(__tcpMerged\)/);
+  assert.match(patched, /return e&&"object"==typeof e&&!Array\.isArray\(e\)\?e:void 0/);
+  assert.doesNotMatch(patched, /__tcpToolProtocol/);
+  assert.doesNotMatch(patched, /__tcpToolConfig/);
+  assert.doesNotMatch(patched, /__tcpContextToolProtocol/);
+  assert.doesNotMatch(patched, /__tcpContextToolConfig/);
 });
 
 await runTest("real context patch rewrites token usage stream max per model", async () => {
@@ -371,14 +441,14 @@ await runTest("real context patch updates an existing patch to configured token 
   assert.doesNotMatch(patched, /i=\{\.\.\.i,max_tokens:Math\.max\(i\.max_tokens\|\|0,\d+\)\}/);
 });
 
-await runTest("real context patch upgrades legacy installed patch with tool protocol forwarding", async () => {
+await runTest("real context patch upgrades legacy installed patch without reintroducing forced tool protocol", async () => {
   const { root, indexJsPath } = createFakeTraeWithRealContextFile("tcp-real-upgrade-extra-config-");
   const configPath = path.join(root, "overrides.json");
   setModelOverride(configPath, "gpt-5.4", 262144);
   applyRealContextPatch({ traeRoot: root, configPath });
   const legacyPatched = fs
     .readFileSync(indexJsPath, "utf8")
-    .replace(",extra_config:o?.extra_config??o?.custom_config", "")
+    .replace(/,extra_config:\(\(\)=>\{let e=o\?\.extra_config\?\?o\?\.custom_config;try\{e="string"==typeof e&&e\.trim\(\)\?JSON\.parse\(e\):e\}catch\{e=void 0\}return e&&"object"==typeof e&&!Array\.isArray\(e\)\?e:void 0\}\)\(\)/g, "")
     .replace(/,u\.extra_config=__tcpToolConfig\(u\.extra_config\?\?o\?\.custom_config\)/g, "")
     .replace(",extra_config:__tcpContextToolConfig(r.extra_config??r.custom_config)", "");
   fs.writeFileSync(indexJsPath, legacyPatched, "utf8");
@@ -388,9 +458,10 @@ await runTest("real context patch upgrades legacy installed patch with tool prot
 
   const upgraded = fs.readFileSync(indexJsPath, "utf8");
   assert.equal(status.realContextPatched, true);
-  assert.match(upgraded, /extra_config:o\?\.extra_config\?\?o\?\.custom_config/);
-  assert.match(upgraded, /u\.extra_config=__tcpToolConfig/);
-  assert.match(upgraded, /extra_config:__tcpContextToolConfig\(r\.extra_config\?\?r\.custom_config\)/);
+  assert.match(upgraded, /extra_config:\(\(\)=>\{let e=o\?\.extra_config\?\?o\?\.custom_config;try\{e="string"==typeof e&&e\.trim\(\)\?JSON\.parse\(e\):e\}/);
+  assert.doesNotMatch(upgraded, /u\.extra_config=__tcpToolConfig/);
+  assert.match(upgraded, /extra_config:\(\(\)=>\{let e=r\.extra_config\?\?r\.custom_config;try\{e="string"==typeof e&&e\.trim\(\)\?JSON\.parse\(e\):e\}/);
+  assert.doesNotMatch(upgraded, /native_function_call:!0/);
 });
 
 
@@ -505,7 +576,7 @@ conn.close()
   assert.deepEqual(result.stdout.trim().split(/\r?\n/), ["1000000", "1000000"]);
 });
 
-await runTest("state database patch adds SOLO tool protocol defaults", async () => {
+await runTest("state database patch preserves existing tool protocol config", async () => {
   const root = tempDir("tcp-state-tool-protocol-");
   const dbPath = path.join(root, "state.vscdb");
   const seed = {
@@ -513,7 +584,7 @@ await runTest("state database patch adds SOLO tool protocol defaults", async () 
       {
         name: "openai//gpt-5.5",
         display_name: "gpt-5.5",
-        custom_config: "",
+        custom_config: JSON.stringify({ native_function_call: false, provider_flag: "keep" }),
         prompt_max_tokens: 131072,
       },
     ],
@@ -542,15 +613,68 @@ value = conn.execute('select value from ItemTable where key=?', ('model-list',))
 item = json.loads(value)['models'][0]
 config = json.loads(item['custom_config'])
 print(config['native_function_call'])
-print(config['parallel_tool_calling'])
-print(config['native_keep_finish_tool'])
-print(isinstance(item['extra_config'], dict))
-print(item['extra_config']['native_function_call'])
+print(config['provider_flag'])
+print('extra_config' in item)
 conn.close()
 `;
   const result = spawnSync("python", ["-c", check, dbPath], { encoding: "utf8" });
   assert.equal(result.status, 0);
-  assert.deepEqual(result.stdout.trim().split(/\r?\n/), ["True", "False", "False", "True", "True"]);
+  assert.deepEqual(result.stdout.trim().split(/\r?\n/), ["False", "keep", "False"]);
+});
+
+await runTest("state database patch removes legacy forced tool protocol-only config", async () => {
+  const root = tempDir("tcp-state-tool-protocol-cleanup-");
+  const dbPath = path.join(root, "state.vscdb");
+  const legacyForced = {
+    apply_file_path: true,
+    enable_invalid_json_hint: true,
+    is_new_pe: true,
+    native_function_call: true,
+    native_keep_finish_tool: false,
+    parallel_tool_calling: false,
+    use_v2_process: true,
+  };
+  const seed = {
+    models: [
+      {
+        name: "openai//gpt-5.5",
+        display_name: "gpt-5.5",
+        custom_config: JSON.stringify(legacyForced),
+        extra_config: legacyForced,
+        prompt_max_tokens: 131072,
+      },
+    ],
+  };
+  const setup = `
+import sqlite3, sys, json
+conn = sqlite3.connect(sys.argv[1])
+cur = conn.cursor()
+cur.execute('create table ItemTable (key text primary key, value text)')
+cur.execute('insert into ItemTable values (?, ?)', ('model-list', ${JSON.stringify(JSON.stringify(seed))}))
+conn.commit()
+conn.close()
+`;
+  const { spawnSync } = await import("node:child_process");
+  assert.equal(spawnSync("python", ["-c", setup, dbPath], { encoding: "utf8" }).status, 0);
+  const configPath = path.join(root, "overrides.json");
+  setModelOverride(configPath, "gpt-5.5", 1000000);
+
+  const status = applyStateDatabasePatch({ dbPath, configPath });
+
+  assert.equal(status.stateDbPatched, true);
+  const check = `
+import sqlite3, sys, json
+conn = sqlite3.connect(sys.argv[1])
+value = conn.execute('select value from ItemTable where key=?', ('model-list',)).fetchone()[0]
+item = json.loads(value)['models'][0]
+print(repr(item['custom_config']))
+print('extra_config' in item)
+print(item['prompt_max_tokens'])
+conn.close()
+`;
+  const result = spawnSync("python", ["-c", check, dbPath], { encoding: "utf8" });
+  assert.equal(result.status, 0);
+  assert.deepEqual(result.stdout.trim().split(/\r?\n/), ["''", "False", "1000000"]);
 });
 
 await runTest("state database patch keeps configured tokens per model", async () => {
@@ -839,6 +963,56 @@ await runTest("desktop UI guards actions when bridge is unavailable", async () =
   assert.match(appJs, /setBridgeAvailability\(false\)/);
   assert.match(appJs, /state\.editingModelId === mapping\.modelId/);
   assert.match(appJs, /resetEditor\(\);\s*}\s*render\(\);/);
+});
+
+await runTest("workbench-patch injects enable_decouple_model_extra_config=false into Ovn.updateConfig", async () => {
+  const { applyWorkbenchPatch, getWorkbenchPatchStatus, revertWorkbenchPatch } = await import("../src/workbench-patch.js");
+  const fake = createFakeTraeInstall("tcp-workbench-");
+  const wbDir = path.join(fake.outDir, "vs", "workbench");
+  fs.mkdirSync(wbDir, { recursive: true });
+  const wbPath = path.join(wbDir, "workbench.desktop.main.js");
+  const before = [
+    'var yu=De("IDynamicConfigService"),_vn=class extends O{static{this.IPC_SERVICE_NAME="DynamicConfigService"}',
+    'Ovn=class extends O{constructor(i){super(),this.a=i}async updateConfig(i){return await this.a.call("updateConfig",i)}}',
+    'N(){return this.j.getValue("ai_assistant.request.enable_decouple_model_extra_config")||void 0}',
+  ].join(";");
+  fs.writeFileSync(wbPath, before, "utf8");
+
+  const initial = getWorkbenchPatchStatus({ traeRoot: fake.root });
+  assert.equal(initial.workbenchFileExists, true);
+  assert.equal(initial.workbenchPatched, false);
+
+  const status = applyWorkbenchPatch({ traeRoot: fake.root });
+  assert.equal(status.workbenchPatched, true);
+  assert.equal(status.workbenchUpdateConfigPatched, true);
+  assert.equal(status.workbenchDecoupleGetterPatched, true);
+  assert.equal(status.workbenchBackupExists, true);
+
+  const after = fs.readFileSync(wbPath, "utf8");
+  assert.ok(after.includes('i.iCubeApp.ai_features.enable_decouple_model_extra_config=false'));
+  assert.ok(after.includes('typeof __tcpDecouple==="boolean"?__tcpDecouple:void 0'));
+
+  // 二次 apply 幂等
+  const status2 = applyWorkbenchPatch({ traeRoot: fake.root });
+  assert.equal(status2.workbenchPatched, true);
+  const after2 = fs.readFileSync(wbPath, "utf8");
+  assert.equal(after, after2);
+
+  // revert 复原
+  const reverted = revertWorkbenchPatch({ traeRoot: fake.root });
+  assert.equal(reverted.workbenchPatched, false);
+  assert.equal(reverted.workbenchBackupExists, false);
+  assert.equal(fs.readFileSync(wbPath, "utf8"), before);
+});
+
+await runTest("workbench-patch throws when updateConfig anchor missing (Trae version drift)", async () => {
+  const { applyWorkbenchPatch } = await import("../src/workbench-patch.js");
+  const fake = createFakeTraeInstall("tcp-workbench-drift-");
+  const wbDir = path.join(fake.outDir, "vs", "workbench");
+  fs.mkdirSync(wbDir, { recursive: true });
+  const wbPath = path.join(wbDir, "workbench.desktop.main.js");
+  fs.writeFileSync(wbPath, "// totally unrelated content", "utf8");
+  assert.throws(() => applyWorkbenchPatch({ traeRoot: fake.root }), /updateConfig/);
 });
 
 await runTest("electron window points to a CommonJS preload bridge", async () => {
