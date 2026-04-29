@@ -967,6 +967,7 @@ await runTest("desktop UI guards actions when bridge is unavailable", async () =
 
 await runTest("workbench-patch injects enable_decouple_model_extra_config=false into Ovn.updateConfig", async () => {
   const { applyWorkbenchPatch, getWorkbenchPatchStatus, revertWorkbenchPatch } = await import("../src/workbench-patch.js");
+  const crypto = await import("node:crypto");
   const fake = createFakeTraeInstall("tcp-workbench-");
   const wbDir = path.join(fake.outDir, "vs", "workbench");
   fs.mkdirSync(wbDir, { recursive: true });
@@ -977,20 +978,52 @@ await runTest("workbench-patch injects enable_decouple_model_extra_config=false 
     'N(){return this.j.getValue("ai_assistant.request.enable_decouple_model_extra_config")||void 0}',
   ].join(";");
   fs.writeFileSync(wbPath, before, "utf8");
+  // 模拟 product.json，含原始 checksum
+  const originalChecksum = crypto
+    .createHash("sha256")
+    .update(Buffer.from(before, "utf8"))
+    .digest("base64")
+    .replace(/=+$/, "");
+  const productJsonPath = path.join(fake.root, "resources", "app", "product.json");
+  const productJsonContent = `{
+  "checksums": {
+    "vs/base/parts/sandbox/electron-browser/preload.js": "OLD_HASH_A",
+    "vs/workbench/workbench.desktop.main.js": "${originalChecksum}",
+    "vs/workbench/workbench.desktop.main.css": "OLD_HASH_B"
+  },
+  "version": "1.107.1"
+}`;
+  fs.writeFileSync(productJsonPath, productJsonContent, "utf8");
 
   const initial = getWorkbenchPatchStatus({ traeRoot: fake.root });
   assert.equal(initial.workbenchFileExists, true);
   assert.equal(initial.workbenchPatched, false);
+  assert.equal(initial.workbenchChecksumMatches, true);
 
   const status = applyWorkbenchPatch({ traeRoot: fake.root });
-  assert.equal(status.workbenchPatched, true);
+  assert.equal(status.workbenchPatched, true, "整体 patched 状态应为 true");
   assert.equal(status.workbenchUpdateConfigPatched, true);
   assert.equal(status.workbenchDecoupleGetterPatched, true);
   assert.equal(status.workbenchBackupExists, true);
+  assert.equal(status.workbenchChecksumMatches, true, "patch 后 checksum 必须匹配新文件");
+  assert.equal(status.productJsonBackupExists, true, "product.json 备份必须存在");
 
   const after = fs.readFileSync(wbPath, "utf8");
   assert.ok(after.includes('i.iCubeApp.ai_features.enable_decouple_model_extra_config=false'));
   assert.ok(after.includes('typeof __tcpDecouple==="boolean"?__tcpDecouple:void 0'));
+
+  // product.json 中 workbench checksum 必须更新
+  const newChecksum = crypto
+    .createHash("sha256")
+    .update(fs.readFileSync(wbPath))
+    .digest("base64")
+    .replace(/=+$/, "");
+  const productJsonAfter = fs.readFileSync(productJsonPath, "utf8");
+  assert.ok(productJsonAfter.includes(`"vs/workbench/workbench.desktop.main.js": "${newChecksum}"`),
+    "product.json 中 workbench checksum 应该更新为 patch 后的 hash");
+  assert.ok(productJsonAfter.includes('"OLD_HASH_A"'), "其他 checksum 不应被改动");
+  assert.ok(productJsonAfter.includes('"OLD_HASH_B"'), "其他 checksum 不应被改动");
+  assert.ok(!productJsonAfter.includes(`"${originalChecksum}"`), "原 checksum 应已被替换");
 
   // 二次 apply 幂等
   const status2 = applyWorkbenchPatch({ traeRoot: fake.root });
@@ -1002,7 +1035,10 @@ await runTest("workbench-patch injects enable_decouple_model_extra_config=false 
   const reverted = revertWorkbenchPatch({ traeRoot: fake.root });
   assert.equal(reverted.workbenchPatched, false);
   assert.equal(reverted.workbenchBackupExists, false);
+  assert.equal(reverted.productJsonBackupExists, false);
   assert.equal(fs.readFileSync(wbPath, "utf8"), before);
+  // product.json 必须复原
+  assert.equal(fs.readFileSync(productJsonPath, "utf8"), productJsonContent);
 });
 
 await runTest("workbench-patch throws when updateConfig anchor missing (Trae version drift)", async () => {

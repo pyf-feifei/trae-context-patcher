@@ -6,3 +6,4 @@ export const MTGA_HELPER_FILENAME = "mtga-trae-context-override.js";
 export const TRAE_PROCESS_NAME = "Trae";
 export const REAL_CONTEXT_BACKUP_SUFFIX = ".trae-context-real-context-backup";
 export const WORKBENCH_BACKUP_SUFFIX = ".trae-context-workbench-backup";
+export const PRODUCT_JSON_BACKUP_SUFFIX = ".trae-context-product-backup";
